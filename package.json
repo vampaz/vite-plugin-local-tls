@@ -21,7 +21,7 @@
     "url": "git+https://github.com/vampaz/vite-plugin-local-tls.git"
   },
   "bin": {
-    "vite-local-tls": "./dist/cli.js"
+    "vite-local-tls": "dist/cli.js"
   },
   "files": [
     "CHANGELOG.md",

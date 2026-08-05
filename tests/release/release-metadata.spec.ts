@@ -39,6 +39,7 @@ describe('release metadata', () => {
       url: 'git+https://github.com/vampaz/vite-plugin-local-tls.git',
     });
     expect(manifest.publishConfig).toEqual({ access: 'public' });
+    expect(manifest.bin).toEqual({ 'vite-local-tls': 'dist/cli.js' });
     expect(manifest.files).toEqual([
       'CHANGELOG.md',
       'CONTRIBUTING.md',

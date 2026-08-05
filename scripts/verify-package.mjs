@@ -64,7 +64,7 @@ async function verifyInstalledPackage(temporaryDirectory, tarballPath) {
   );
   requireValue(installedManifest.name === packageName, 'The installed package name is incorrect.');
   requireValue(
-    installedManifest.bin?.['vite-local-tls'] === './dist/cli.js',
+    installedManifest.bin?.['vite-local-tls'] === 'dist/cli.js',
     'The installed CLI entry point is incorrect.',
   );
   requireValue(installedManifest.exports?.['.'], 'The root package export is missing.');
