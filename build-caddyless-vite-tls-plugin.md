@@ -519,37 +519,37 @@ Every source test remains adjacent to its source file. Cross-package contract an
     - Additional verification: `npm pack --dry-run && npm ls --omit=dev`
     - Commit: `test: enforce zero runtime dependencies`
 
-- [ ] Phase 8: Document, secure, package, and review the complete replacement
+- [x] Phase 8: Document, secure, package, and review the complete replacement
 
-  - [ ] Step 8.1: Write usage and complete option documentation
+  - [x] Step 8.1: Write usage and complete option documentation
     - Objective: Document zero-config use, every preserved option, clone/worktree URLs, same-branch labels, multiple domains, preview, Linux resolution, trust commands, service commands, diagnostics, and uninstall behavior. Examples must use the new Caddy-neutral API names.
     - Files: `README.md`, `tests/contract/readme-examples.spec.ts`
     - Test file: `tests/contract/readme-examples.spec.ts`
     - Verification: `npm run test -- tests/contract/readme-examples.spec.ts`
     - Commit: `docs: document caddyless local TLS plugin`
 
-  - [ ] Step 8.2: Document security boundaries and certificate limitations
+  - [x] Step 8.2: Document security boundaries and certificate limitations
     - Objective: Explain CA-key sensitivity, loopback-only binding, control-socket permissions, exact-host issuance, trust removal, port-443 privilege, DNS behavior, and the fact that embedded browsers may use a separate trust profile. Do not promise that removing Caddy alone fixes every embedded-browser certificate rejection.
     - Files: `SECURITY.md`, `README.md`, `tests/contract/security-docs.spec.ts`
     - Test file: `tests/contract/security-docs.spec.ts`
     - Verification: `npm run test -- tests/contract/security-docs.spec.ts`
     - Commit: `docs: define local CA security boundaries`
 
-  - [ ] Step 8.3: Write the migration guide and explicit Caddy-option mapping
+  - [x] Step 8.3: Write the migration guide and explicit Caddy-option mapping
     - Objective: Map every old import, helper, option, terminal behavior, and operational command to the new plugin. Call out only the three meaningless Caddy administration settings as removed and explain their control-channel replacement.
     - Files: `MIGRATION.md`, `tests/contract/migration-completeness.spec.ts`
     - Test file: `tests/contract/migration-completeness.spec.ts`
     - Verification: `npm run test -- tests/contract/migration-completeness.spec.ts`
     - Commit: `docs: add complete Caddy migration guide`
 
-  - [ ] Step 8.4: Verify the distributable artifact and executable entry points
+  - [x] Step 8.4: Verify the distributable artifact and executable entry points
     - Objective: Build because packaging is directly affected, inspect exports and type declarations, install the tarball into a clean Vite fixture, invoke the CLI from the installed package, and confirm certificate templates or other required runtime assets are included.
     - Files: `scripts/verify-package.mjs`, `tests/package/install.spec.ts`, `package.json`, `tsup.config.ts`
     - Test file: `tests/package/install.spec.ts`
     - Verification: `npm run build && npm run test -- tests/package/install.spec.ts && npm run verify:package`
     - Commit: `chore: verify publishable plugin artifact`
 
-  - [ ] Step 8.5: Perform the full-parity review loop before release configuration is accepted
+  - [x] Step 8.5: Perform the full-parity review loop before release configuration is accepted
     - Objective: Run all verification, compare every ledger row against evidence, inspect every changed file for unnecessary code, confirm no unused imports or orphaned assets, confirm no unrelated process is touched, and repeat until the full suite is green. Do not publish, tag, or create a release; record the evidence needed for the user acceptance gate.
     - Files: all files changed by prior phases; no new feature work
     - Test files: all unit, contract, package, and E2E tests

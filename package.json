@@ -24,7 +24,9 @@
     "vite-local-tls": "./dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "MIGRATION.md",
+    "SECURITY.md"
   ],
   "type": "module",
   "module": "./dist/index.js",
@@ -51,6 +53,7 @@
     "test:e2e": "playwright test --config tests/e2e/playwright.config.ts",
     "test:e2e:matrix": "bash tests/e2e/run-vite-matrix.sh",
     "verify:zero-deps": "npm run build && node scripts/verify-zero-runtime-dependencies.mjs",
+    "verify:package": "npm run build && node scripts/verify-package.mjs",
     "playwright:install": "playwright install chromium",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
