@@ -25,13 +25,17 @@ describe('README contract', () => {
       'cors',
       'controlSocket',
       'serviceNamespace',
+      'serverName',
+      'caddyApiUrl',
+      'caddyAdminOrigin',
       'internalTls',
       'upstreamHostHeader',
     ]) {
       expect(readme).toContain(`\`${option}\``);
     }
-    expect(readme).not.toContain('resolveCaddyTlsDomains');
-    expect(readme).not.toContain('resolveCaddyTlsUrl');
+    expect(readme).toContain('resolveCaddyTlsDomains');
+    expect(readme).toContain('resolveCaddyTlsUrl');
+    expect(readme).toContain('ViteCaddyTlsPluginOptions');
   });
 
   it('covers the supported development and operational workflows', async () => {

@@ -26,26 +26,26 @@ Replace `caddyTls(options)` with `localTls(options)`. The new plugin keeps dev-s
 | `resolveCaddyTlsDomains` | `resolveLocalTlsDomains` |
 | `resolveCaddyTlsUrl`     | `resolveLocalTlsUrl`     |
 
-The helpers retain normalization, Git checkout and linked-worktree detection, detached-HEAD handling, DNS-label compaction, loopback-domain handling, and `null` for a missing or non-singular URL.
+The old helper names remain available as deprecated aliases, so changing only the package import works. The new names are canonical. Both retain normalization, Git checkout and linked-worktree detection, detached-HEAD handling, DNS-label compaction, loopback-domain handling, and `null` for a missing or non-singular URL. `ViteCaddyTlsPluginOptions` likewise remains available as a deprecated alias for `LocalTlsPluginOptions`.
 
 ## Option mapping
 
-| Old option           | New option or outcome                                                                                                                                 |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `domain`             | Preserved as `domain`.                                                                                                                                |
-| `baseDomain`         | Preserved as `baseDomain`.                                                                                                                            |
-| `loopbackDomain`     | Preserved as `loopbackDomain`.                                                                                                                        |
-| `repo`               | Preserved as `repo`.                                                                                                                                  |
-| `branch`             | Preserved as `branch`.                                                                                                                                |
-| `instanceLabel`      | Preserved as `instanceLabel`.                                                                                                                         |
-| `cors`               | Preserved as `cors`.                                                                                                                                  |
-| `internalTls`        | Preserved as `internalTls`, with the observable certificate outcomes described below.                                                                 |
-| `upstreamHostHeader` | Preserved as `upstreamHostHeader`.                                                                                                                    |
-| `caddyApiUrl`        | The Caddy-specific name is removed. Use `controlSocket` to select an alternate private control channel. It is a socket or named-pipe path, not a URL. |
-| `serverName`         | The Caddy-specific name is removed. Use `serviceNamespace` to isolate daemon state and the control-channel name.                                      |
-| `caddyAdminOrigin`   | Removed without replacement because no HTTP administration API or Origin policy exists.                                                               |
+| Old option           | New option or outcome                                                                                                                               |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `domain`             | Preserved as `domain`.                                                                                                                              |
+| `baseDomain`         | Preserved as `baseDomain`.                                                                                                                          |
+| `loopbackDomain`     | Preserved as `loopbackDomain`.                                                                                                                      |
+| `repo`               | Preserved as `repo`.                                                                                                                                |
+| `branch`             | Preserved as `branch`.                                                                                                                              |
+| `instanceLabel`      | Preserved as `instanceLabel`.                                                                                                                       |
+| `cors`               | Preserved as `cors`.                                                                                                                                |
+| `internalTls`        | Preserved as `internalTls`, with the observable certificate outcomes described below.                                                               |
+| `upstreamHostHeader` | Preserved as `upstreamHostHeader`.                                                                                                                  |
+| `caddyApiUrl`        | Accepted as a deprecated no-op with a warning because no HTTP Admin API exists. Use `controlSocket` to select an alternate private control channel. |
+| `serverName`         | Accepted as a deprecated alias for `serviceNamespace`, which isolates daemon state and the control-channel name.                                    |
+| `caddyAdminOrigin`   | Accepted as a deprecated no-op with a warning because no HTTP administration API or Origin policy exists.                                           |
 
-These are the only removed public option names. `caddyApiUrl` and `serverName` have explicit backend-neutral replacements; `caddyAdminOrigin` has no meaningful behavior without Caddy.
+No old public option name is rejected. `serverName` keeps its isolation behavior through the backend-neutral namespace. The two HTTP Admin API settings cannot affect the Caddyless backend, so they produce explicit migration warnings instead of disappearing silently.
 
 ## Certificate-policy mapping
 

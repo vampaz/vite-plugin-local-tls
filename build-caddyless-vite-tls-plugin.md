@@ -601,9 +601,41 @@ Every source test remains adjacent to its source file. Cross-package contract an
     - Verification: `npm run verify:release-dry-run && npm run verify:published -- @vampaz/vite-plugin-local-tls@0.0.1 && npm run verify:published -- @vampaz/vite-plugin-local-tls@1.0.0`
     - Commit: Changesets creates the `Version Packages` release commit; no manual release commit or tag
 
+- [ ] Phase 10: Close the full-replacement gaps before publication
+
+  - [ ] Step 10.1: Freeze the uncovered compatibility and default-path failures
+    - Objective: Add failing contract and integration tests for the old public helper names, option type, legacy configuration names, macOS system-service privileges, Windows boot-service privileges, and the packed plugin's normal zero-injection startup path. The tests must distinguish mocked adapter coverage from live platform evidence.
+    - Files: `tests/contract/legacy-api-compatibility.spec.ts`, `src/service-install-macos.spec.ts`, `src/service-install-windows.spec.ts`, `tests/package/default-path.spec.ts`, `build-caddyless-vite-tls-plugin.md`
+    - Verification: run each new focused test and confirm it fails for the intended missing behavior before implementation
+    - Commit: none; commit the tests with the implementation that makes them pass
+
+  - [x] Step 10.2: Preserve the old plugin's public API and configuration surface
+    - Objective: Export deprecated aliases for `resolveCaddyTlsDomains`, `resolveCaddyTlsUrl`, and `ViteCaddyTlsPluginOptions`; accept `serverName`, `caddyApiUrl`, and `caddyAdminOrigin`; map `serverName` to `serviceNamespace`; and emit precise one-time migration warnings for Caddy-only settings that cannot retain an HTTP Admin API meaning. New names remain canonical while existing configurations continue to start.
+    - Files: `src/index.ts`, `src/interfaces/plugin-options.ts`, `src/plugin.ts`, compatibility tests, `README.md`, `MIGRATION.md`
+    - Verification: focused compatibility tests, typecheck, lint, and format check
+    - Commit: `feat: preserve legacy plugin compatibility`
+
+  - [ ] Step 10.3: Make the shared port-443 service genuinely privileged and durable
+    - Objective: Replace the macOS user LaunchAgent with a root LaunchDaemon, install Unix service definitions through elevation, run Windows at boot as `SYSTEM` with the highest run level, retain Linux `CAP_NET_BIND_SERVICE`, and make install/uninstall ownership checks cover the system definitions. Ensure the service has a stable executable entry point and does not depend on a disposable consumer checkout remaining in place.
+    - Files: `src/service-install.ts`, `src/interfaces/service-install-options.ts`, `src/cli.ts`, service-install tests, `README.md`, `SECURITY.md`
+    - Verification: focused macOS/Linux/Windows service tests plus a live macOS install/start/status/uninstall exercise on an isolated namespace and listener, without touching an unrelated Caddy process
+    - Commit: `fix: install a durable privileged TLS service`
+
+  - [ ] Step 10.4: Prove the packed package's normal plugin path with real TLS validation
+    - Objective: Install the tarball into a clean Vite fixture, call the public default plugin without injected infrastructure dependencies, bind the standard HTTPS listener, trust its generated CA in a disposable browser profile, and load both the page and HMR WebSocket with `ignoreHTTPSErrors: false`. The exercise must cover install, automatic service discovery, route registration, cleanup, and uninstall.
+    - Files: `tests/package/default-path.spec.ts`, `tests/e2e/`, package verification scripts, workflow prerequisites
+    - Verification: focused packed-package default-path test and browser E2E with certificate validation enabled
+    - Commit: `test: prove the default installed TLS path`
+
+  - [ ] Step 10.5: Repeat the complete parity and pull-request review
+    - Objective: Re-run every unit, contract, package, browser, and Vite-version check; compare every old public export and option against the compatibility evidence; verify live platform claims are no broader than the collected evidence; inspect the PR diff for regressions and unnecessary changes; and repeat until no actionable finding remains. Publication stays blocked until the user separately approves Step 9.6.
+    - Files: all files changed by Phase 10
+    - Verification: `npm run typecheck && npm run lint && npm run format:check && npm run test && npm run test:e2e && npm run test:e2e:matrix && npm run verify:zero-deps && npm run verify:package && git diff --check`
+    - Commit: `chore: complete full replacement verification`
+
 ## Release acceptance checklist
 
-- [x] Every row in the functional parity ledger links to passing unit or E2E evidence.
+- [ ] Every row in the functional parity ledger links to passing public-path unit or E2E evidence.
 - [x] At least four simultaneous Vite servers run on independent HTTPS branch URLs.
 - [x] Independent clones and linked worktrees both work.
 - [x] The same branch can run twice with distinct `instanceLabel` values.
@@ -616,7 +648,9 @@ Every source test remains adjacent to its source file. Cross-package contract an
 - [x] The installed package has no runtime npm dependencies and no Portless, Caddy, or mkcert runtime requirement.
 - [x] Missing OpenSSL, Git, trust tooling, port privileges, and port conflicts produce precise errors without silent fallback.
 - [x] `internalTls` true, false, and omitted pass the frozen local, loopback, and custom-domain certificate-policy matrix; imported keys and certificates are exact-host validated and private.
-- [x] The packed package installs in a clean Vite fixture and exposes valid ESM, types, plugin, and CLI entry points.
+- [ ] The packed package installs in a clean Vite fixture, exposes valid ESM, types, plugin, and CLI entry points, and starts through the default public plugin API without injected infrastructure.
+- [ ] Existing consumers can retain the old helper imports, option type, and legacy configuration names while migrating off the Caddy-backed package.
+- [ ] The normal macOS installation uses a privileged system service that can bind port 443; Windows starts the proxy at boot as `SYSTEM`; Linux retains only the capability required for the low port.
 - [ ] Every publishable change requires a Changeset and the `Version Packages` pull request is generated through the same Changesets action flow.
 - [x] Pull requests and `master` run the same Tests gate; release checks out the exact successful Tests `head_sha` and cannot run after a failed, cancelled, or stale result.
 - [ ] npm publication uses the configured `release.yml` trusted publisher, no long-lived publish token, and produces provenance whose `gitHead` matches the tested commit.

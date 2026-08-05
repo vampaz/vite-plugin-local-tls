@@ -110,6 +110,26 @@ function createDefaultDependencies(): PluginRuntimeDependencies {
   };
 }
 
+function resolveCompatibilityOptions(
+  options: LocalTlsPluginOptions,
+  dependencies: PluginRuntimeDependencies,
+): LocalTlsPluginOptions {
+  if (options.caddyApiUrl !== undefined) {
+    dependencies.logger.warn(
+      '`caddyApiUrl` is deprecated and ignored because the local TLS service has no HTTP Admin API. Use `controlSocket` when a custom control channel is required.',
+    );
+  }
+  if (options.caddyAdminOrigin !== undefined) {
+    dependencies.logger.warn(
+      '`caddyAdminOrigin` is deprecated and ignored because the local TLS service has no HTTP Admin API.',
+    );
+  }
+  return {
+    ...options,
+    serviceNamespace: options.serviceNamespace ?? options.serverName,
+  };
+}
+
 function buildDomainResolutionMessage(options: LocalTlsPluginOptions): string {
   const issues: string[] = [];
   if (options.domain !== undefined && !normalizeDomains(options.domain)) {
@@ -479,7 +499,7 @@ export function createViteLocalTlsPlugin(
   options: LocalTlsPluginOptions = {},
   dependencies: PluginRuntimeDependencies = createDefaultDependencies(),
 ): Plugin {
-  return createPlugin(options, dependencies);
+  return createPlugin(resolveCompatibilityOptions(options, dependencies), dependencies);
 }
 
 export function viteLocalTlsPlugin(options: LocalTlsPluginOptions = {}): PluginOption {

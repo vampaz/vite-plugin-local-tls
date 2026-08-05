@@ -67,6 +67,9 @@ Each hostname is claimed independently, so taking over `app.localhost` does not 
 | `cors`               | Replaces the proxied response's CORS allow-origin value and adds the legacy allow-methods and allow-headers values without synthesizing an application response.                    |
 | `controlSocket`      | Selects an alternate Unix control socket or Windows named pipe. It is not an HTTP endpoint.                                                                                         |
 | `serviceNamespace`   | Isolates the service state and control-channel name. Use a namespace only when a deliberately separate service is required.                                                         |
+| `serverName`         | Deprecated compatibility alias for `serviceNamespace`.                                                                                                                              |
+| `caddyApiUrl`        | Deprecated compatibility no-op. It warns because the replacement has no HTTP Admin API; use `controlSocket` if a custom control channel is required.                                |
+| `caddyAdminOrigin`   | Deprecated compatibility no-op. It warns because the replacement has no HTTP Admin API Origin policy.                                                                               |
 | `internalTls`        | `true` forces the local CA. Local and loopback names also use local automation when omitted or `false`; a custom hostname with `false` requires an imported exact-host certificate. |
 | `upstreamHostHeader` | Rewrites the `Host` header sent to Vite or middleware such as Wrangler/Miniflare.                                                                                                   |
 
@@ -86,6 +89,8 @@ const domains = resolveLocalTlsDomains({
 ```
 
 `resolveLocalTlsUrl()` returns `null` when zero or multiple domains resolve. `resolveLocalTlsDomains()` returns every resolved hostname or `null`.
+
+Existing migrations may keep `resolveCaddyTlsDomains`, `resolveCaddyTlsUrl`, and `ViteCaddyTlsPluginOptions`; they are deprecated aliases with the same results. This allows the package import to be replaced before adopting the Caddy-neutral names.
 
 ## Certificates and commands
 
