@@ -7,6 +7,6 @@ export type { LocalTlsDomainOptions, LoopbackDomain } from './interfaces/plugin-
 
 export default function viteLocalTlsPlugin(): PluginOption {
   return {
-    name: 'vite-plugin-local-tls',
+    name: '@vampaz/vite-plugin-local-tls',
   };
 }
