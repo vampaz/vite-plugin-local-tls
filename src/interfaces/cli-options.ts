@@ -1,5 +1,6 @@
 export interface CliContext {
   namespace: string;
+  controlSocket?: string;
 }
 
 export interface CliCertificateImportRequest extends CliContext {

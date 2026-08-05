@@ -61,6 +61,9 @@ function safeServiceKey(options: ServiceInstallOptions): string {
   validateDefinitionValue(options.namespace, 'Service namespace');
   validateDefinitionValue(options.nodePath, 'Node path');
   validateDefinitionValue(options.cliPath, 'CLI path');
+  if (options.controlSocket) {
+    validateDefinitionValue(options.controlSocket, 'Control socket');
+  }
   return key;
 }
 
@@ -124,6 +127,9 @@ function launchdDefinition(options: ServiceInstallOptions, identifier: string): 
     '--namespace',
     options.namespace,
   ];
+  if (options.controlSocket) {
+    arguments_.push('--control-socket', options.controlSocket);
+  }
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
@@ -163,6 +169,13 @@ function systemdDefinition(options: ServiceInstallOptions): string {
     '--namespace',
     options.namespace,
   ];
+  if (options.controlSocket) {
+    arguments_.push('--control-socket', options.controlSocket);
+  }
+  const writablePaths = [options.paths.stateDirectory, options.paths.runtimeDirectory];
+  if (options.controlSocket && !options.controlSocket.startsWith('\\\\.\\pipe\\')) {
+    writablePaths.push(path.dirname(options.controlSocket));
+  }
   return [
     `# ${OWNER_MARKER}`,
     '[Unit]',
@@ -180,7 +193,7 @@ function systemdDefinition(options: ServiceInstallOptions): string {
     'CapabilityBoundingSet=CAP_NET_BIND_SERVICE',
     'NoNewPrivileges=true',
     'ProtectSystem=strict',
-    `ReadWritePaths=${systemdQuote(options.paths.stateDirectory)} ${systemdQuote(options.paths.runtimeDirectory)}`,
+    `ReadWritePaths=${writablePaths.map(systemdQuote).join(' ')}`,
     '',
     '[Install]',
     'WantedBy=multi-user.target',
@@ -275,12 +288,15 @@ async function installWindows(
     '--namespace',
     windowsQuote(options.namespace),
   ].join(' ');
+  const controlSocket = options.controlSocket
+    ? ` --control-socket ${windowsQuote(options.controlSocket)}`
+    : '';
   await runner('schtasks.exe', [
     '/Create',
     '/TN',
     identifier,
     '/TR',
-    command,
+    `${command}${controlSocket}`,
     '/SC',
     'ONLOGON',
     '/RL',
@@ -321,6 +337,7 @@ export async function installStartupService(
     definitionPath,
     nodePath: options.nodePath,
     cliPath: options.cliPath,
+    controlSocket: options.controlSocket ?? null,
     installedAt: new Date().toISOString(),
   };
   await writeRecord(options, record);

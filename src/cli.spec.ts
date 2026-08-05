@@ -121,6 +121,18 @@ describe('vite-local-tls CLI', () => {
     });
   });
 
+  it('passes an alternate control socket through infrastructure commands', async () => {
+    await runCli(['proxy', 'status', '--control-socket', '/tmp/team.sock', '--namespace', 'team'], {
+      actions,
+      io,
+    });
+
+    expect(actions.proxyStatus).toHaveBeenCalledWith({
+      namespace: 'team',
+      controlSocket: '/tmp/team.sock',
+    });
+  });
+
   it('prints focused help without running an action', async () => {
     await expect(runCli(['--help'], { actions, io })).resolves.toBe(0);
 

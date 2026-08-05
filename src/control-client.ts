@@ -165,6 +165,12 @@ export class ControlClient {
     if (response.type !== 'heartbeat') {
       throw new ControlClientError('INVALID_RESPONSE', 'Expected a heartbeat response.');
     }
+    const activeHostnames = new Set(response.hostnames);
+    for (const hostname of hostnames) {
+      if (!activeHostnames.has(hostname)) {
+        this.#claimedHostnames.delete(hostname);
+      }
+    }
     return response.hostnames;
   }
 

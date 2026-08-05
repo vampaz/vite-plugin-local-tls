@@ -22,6 +22,7 @@ export interface ServiceInstallOptions {
   runner?: ServiceInstallCommandRunner;
   useSudo?: boolean;
   definitionDirectory?: string;
+  controlSocket?: string;
 }
 
 export interface ServiceInstallationRecord {
@@ -32,6 +33,7 @@ export interface ServiceInstallationRecord {
   definitionPath: string | null;
   nodePath: string;
   cliPath: string;
+  controlSocket: string | null;
   installedAt: string;
 }
 

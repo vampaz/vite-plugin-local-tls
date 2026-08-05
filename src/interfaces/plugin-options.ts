@@ -8,3 +8,11 @@ export interface LocalTlsDomainOptions {
   branch?: string;
   instanceLabel?: string;
 }
+
+export interface LocalTlsPluginOptions extends LocalTlsDomainOptions {
+  cors?: string;
+  controlSocket?: string;
+  serviceNamespace?: string;
+  internalTls?: boolean;
+  upstreamHostHeader?: string;
+}

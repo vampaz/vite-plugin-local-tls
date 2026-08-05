@@ -423,37 +423,37 @@ Every source test remains adjacent to its source file. Cross-package contract an
     - Verification: `npm run test -- src/service-autostart.spec.ts`
     - Commit: `feat: auto-start local TLS infrastructure`
 
-- [ ] Phase 6: Integrate the complete Vite plugin contract
+- [x] Phase 6: Integrate the complete Vite plugin contract
 
-  - [ ] Step 6.1: Implement the public plugin options and Vite configuration defaults
+  - [x] Step 6.1: Implement the public plugin options and Vite configuration defaults
     - Objective: Expose all functional options from the parity ledger plus the Caddy-neutral `controlSocket` and `serviceNamespace` replacements, default dev and preview host/allowed-host behavior exactly as the current plugin does, configure `server.hmr` WSS settings for the first resolved domain, respect user overrides, and support Vite 3 through 8 through version-specific contract tests rather than unverified API assumptions.
     - Files: `src/plugin.ts`, `src/plugin-config.spec.ts`, `src/interfaces/plugin-options.ts`, `src/index.ts`
     - Test file: `src/plugin-config.spec.ts`
     - Verification: `npm run test -- src/plugin-config.spec.ts`
     - Commit: `feat: configure Vite for shared local TLS`
 
-  - [ ] Step 6.2: Register the actual dev-server upstream after Vite listens
+  - [x] Step 6.2: Register the actual dev-server upstream after Vite listens
     - Objective: Prefer Vite's resolved local URL, otherwise map IPv4/IPv6 wildcard binds to reachable loopback hosts, and use the actual port after Vite auto-increment. Ensure the daemon is ready, register every resolved hostname independently, print the upstream and URLs, and roll back only claims from a partially failed setup.
     - Files: `src/plugin.ts`, `src/plugin-dev-server.spec.ts`, `src/control-client.ts`
     - Test file: `src/plugin-dev-server.spec.ts`
     - Verification: `npm run test -- src/plugin-dev-server.spec.ts`
     - Commit: `feat: register Vite dev server routes`
 
-  - [ ] Step 6.3: Preserve latest-started takeover and multi-domain sibling isolation through the plugin
+  - [x] Step 6.3: Preserve latest-started takeover and multi-domain sibling isolation through the plugin
     - Objective: Verify plugin-visible behavior when another live server takes one or all hostnames, surface lost ownership clearly, leave the old Vite process running, and ensure old shutdown cannot remove the new route. Cover normal close, SIGINT, SIGTERM, transient cleanup retries, heartbeat/lease loss, and orphan reclamation without disturbing a current owner or sibling route.
     - Files: `src/plugin-ownership.spec.ts`, `src/plugin.ts`
     - Test file: `src/plugin-ownership.spec.ts`
     - Verification: `npm run test -- src/plugin-ownership.spec.ts`
     - Commit: `feat: preserve hostname takeover semantics`
 
-  - [ ] Step 6.4: Integrate Vite preview with identical routing and cleanup
+  - [x] Step 6.4: Integrate Vite preview with identical routing and cleanup
     - Objective: Resolve preview host and port, register after preview listens, use the same domains and proxy options, print preview URLs, and release only preview-owned claims on shutdown.
     - Files: `src/plugin.ts`, `src/plugin-preview.spec.ts`
     - Test file: `src/plugin-preview.spec.ts`
     - Verification: `npm run test -- src/plugin-preview.spec.ts`
     - Commit: `feat: proxy Vite preview over local TLS`
 
-  - [ ] Step 6.5: Recover active Vite registrations after daemon restart
+  - [x] Step 6.5: Recover active Vite registrations after daemon restart
     - Objective: Detect control-channel loss, perform bounded daemon recovery, re-register the same owner claims without changing public URLs, and show a prominent error if recovery cannot succeed. Never leave HMR silently disconnected.
     - Files: `src/plugin.ts`, `src/plugin-reconnect.spec.ts`, `src/control-client.ts`
     - Test file: `src/plugin-reconnect.spec.ts`

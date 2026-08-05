@@ -36,6 +36,7 @@ Commands:
 
 Global options:
   --namespace <name>  Use an isolated service namespace (default: default)
+  --control-socket <path>  Use an alternate private control socket or named pipe
   --help              Show this help
 `;
 
@@ -109,15 +110,20 @@ function createService(context: CliContext): LocalTlsService {
     throw new Error('OpenSSL is required. Install openssl and ensure it is on PATH.');
   }
   return new LocalTlsService({
-    paths: getStatePaths(context.namespace),
+    paths: resolvePaths(context),
     opensslPath: requirements.opensslPath,
     namespace: context.namespace,
     port: 443,
   });
 }
 
-async function readAuthority(context: CliContext): Promise<CertificateAuthorityRecord | null> {
+function resolvePaths(context: CliContext): ReturnType<typeof getStatePaths> {
   const paths = getStatePaths(context.namespace);
+  return context.controlSocket ? { ...paths, socketPath: context.controlSocket } : paths;
+}
+
+async function readAuthority(context: CliContext): Promise<CertificateAuthorityRecord | null> {
+  const paths = resolvePaths(context);
   try {
     return JSON.parse(await readFile(paths.caStatePath, 'utf8')) as CertificateAuthorityRecord;
   } catch (error) {
@@ -136,7 +142,7 @@ function createDefaultCliActions(): CliActions {
     if (!requirements.opensslPath || !requirements.trustToolPath) {
       throw new Error(requirements.missing.join('\n'));
     }
-    const paths = getStatePaths(context.namespace);
+    const paths = resolvePaths(context);
     const manager = new CertificateManager({ paths, opensslPath: requirements.opensslPath });
     const authority = await manager.ensureCertificateAuthority();
     return new TrustStore({ requirements, authority }).install();
@@ -152,7 +158,7 @@ function createDefaultCliActions(): CliActions {
   }
 
   async function certificateImport(request: CliCertificateImportRequest): Promise<unknown> {
-    const store = new CertificateImportStore({ paths: getStatePaths(request.namespace) });
+    const store = new CertificateImportStore({ paths: resolvePaths(request) });
     return store.importCertificate({
       hostname: request.hostname,
       certificatePath: request.certificatePath,
@@ -163,13 +169,13 @@ function createDefaultCliActions(): CliActions {
 
   async function certificateList(context: CliContext): Promise<unknown> {
     return new CertificateImportStore({
-      paths: getStatePaths(context.namespace),
+      paths: resolvePaths(context),
     }).listCertificates();
   }
 
   async function certificateRemove(request: CliCertificateRequest): Promise<unknown> {
     const removed = await new CertificateImportStore({
-      paths: getStatePaths(request.namespace),
+      paths: resolvePaths(request),
     }).removeCertificate(request.hostname);
     return { hostname: request.hostname, removed };
   }
@@ -241,23 +247,25 @@ function createDefaultCliActions(): CliActions {
   async function serviceInstall(context: CliContext): Promise<unknown> {
     return installStartupService({
       namespace: context.namespace,
-      paths: getStatePaths(context.namespace),
+      paths: resolvePaths(context),
       nodePath: process.execPath,
       cliPath: fileURLToPath(new URL('./cli.js', import.meta.url)),
+      controlSocket: context.controlSocket,
     });
   }
 
   async function serviceUninstall(context: CliContext): Promise<unknown> {
     return uninstallStartupService({
       namespace: context.namespace,
-      paths: getStatePaths(context.namespace),
+      paths: resolvePaths(context),
       nodePath: process.execPath,
       cliPath: fileURLToPath(new URL('./cli.js', import.meta.url)),
+      controlSocket: context.controlSocket,
     });
   }
 
   async function clean(request: CliCleanRequest): Promise<unknown> {
-    const paths = getStatePaths(request.namespace);
+    const paths = resolvePaths(request);
     const serviceStatus = await createService(request).status();
     if (serviceStatus.running) {
       throw new Error('Stop the local TLS proxy before cleaning its generated state.');
@@ -395,9 +403,14 @@ export async function runCli(
   }
   try {
     const namespace = takeOption(parsedArguments, '--namespace') ?? 'default';
+    const controlSocket = takeOption(parsedArguments, '--control-socket');
+    const context: CliContext = { namespace };
+    if (controlSocket) {
+      context.controlSocket = controlSocket;
+    }
     const result = await dispatch(
       parsedArguments,
-      { namespace },
+      context,
       options.actions ?? createDefaultCliActions(),
     );
     writeResult(io, result);
