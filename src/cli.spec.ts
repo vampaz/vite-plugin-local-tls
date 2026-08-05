@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { runCli } from './cli.js';
 import type { CliActions, CliIo } from './interfaces/cli-options.js';
 
@@ -119,6 +122,35 @@ describe('vite-local-tls CLI', () => {
       namespace: 'default',
       serviceMode: true,
     });
+  });
+
+  it('loads the installed service context from its validated runtime configuration', async () => {
+    const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'vite-local-tls-cli-'));
+    const configurationPath = path.join(temporaryDirectory, 'service.json');
+    try {
+      await writeFile(
+        configurationPath,
+        `${JSON.stringify({
+          version: 1,
+          owner: '@vampaz/vite-plugin-local-tls',
+          namespace: 'windows-service',
+          controlSocket: '\\\\.\\pipe\\windows-service',
+        })}\n`,
+      );
+
+      await runCli(['proxy', 'start', '--service', '--service-config', configurationPath], {
+        actions,
+        io,
+      });
+
+      expect(actions.proxyStart).toHaveBeenCalledWith({
+        namespace: 'windows-service',
+        controlSocket: '\\\\.\\pipe\\windows-service',
+        serviceMode: true,
+      });
+    } finally {
+      await rm(temporaryDirectory, { recursive: true, force: true });
+    }
   });
 
   it('passes a complete service privilege-drop identity to proxy start', async () => {

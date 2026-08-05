@@ -17,6 +17,7 @@ import type {
   RunCliOptions,
 } from './interfaces/cli-options.js';
 import type { CertificateAuthorityRecord } from './interfaces/certificate-record.js';
+import type { ServiceRuntimeConfiguration } from './interfaces/service-runtime-configuration.js';
 import { LocalTlsService } from './service.js';
 import { installStartupService, uninstallStartupService } from './service-install.js';
 import { getStatePaths } from './state-paths.js';
@@ -87,6 +88,39 @@ function requireOption(arguments_: string[], name: string): string {
     throw new Error(`Missing required option ${name}.`);
   }
   return value;
+}
+
+function containsControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint < 32 || codePoint === 127;
+  });
+}
+
+async function readServiceRuntimeConfiguration(
+  configurationPath: string,
+): Promise<ServiceRuntimeConfiguration> {
+  const value = JSON.parse(
+    await readFile(configurationPath, 'utf8'),
+  ) as Partial<ServiceRuntimeConfiguration>;
+  const controlSocketIsValid =
+    value.controlSocket === null ||
+    (typeof value.controlSocket === 'string' &&
+      value.controlSocket.length > 0 &&
+      value.controlSocket.length <= 4096 &&
+      !containsControlCharacter(value.controlSocket));
+  if (
+    value.version !== 1 ||
+    value.owner !== '@vampaz/vite-plugin-local-tls' ||
+    typeof value.namespace !== 'string' ||
+    value.namespace.length === 0 ||
+    value.namespace.length > 256 ||
+    containsControlCharacter(value.namespace) ||
+    !controlSocketIsValid
+  ) {
+    throw new Error('The local TLS service runtime configuration is invalid.');
+  }
+  return value as ServiceRuntimeConfiguration;
 }
 
 function takeIntegerOption(arguments_: string[], name: string): number | undefined {
@@ -429,14 +463,34 @@ export async function runCli(
     return 0;
   }
   try {
-    const namespace = takeOption(parsedArguments, '--namespace') ?? 'default';
+    const configurationPath = takeOption(parsedArguments, '--service-config');
+    const namespaceOption = takeOption(parsedArguments, '--namespace');
     const controlSocket = takeOption(parsedArguments, '--control-socket');
     const runAsUid = takeIntegerOption(parsedArguments, '--run-as-uid');
     const runAsGid = takeIntegerOption(parsedArguments, '--run-as-gid');
     if ((runAsUid === undefined) !== (runAsGid === undefined)) {
       throw new Error('`--run-as-uid` and `--run-as-gid` must be provided together.');
     }
-    const context: CliContext = { namespace };
+    if (
+      configurationPath &&
+      (namespaceOption ||
+        controlSocket ||
+        runAsUid !== undefined ||
+        parsedArguments[0] !== 'proxy' ||
+        parsedArguments[1] !== 'start' ||
+        !parsedArguments.includes('--service'))
+    ) {
+      throw new Error('`--service-config` is reserved for the installed startup service.');
+    }
+    const configuration = configurationPath
+      ? await readServiceRuntimeConfiguration(configurationPath)
+      : null;
+    const context: CliContext = {
+      namespace: configuration?.namespace ?? namespaceOption ?? 'default',
+    };
+    if (configuration?.controlSocket) {
+      context.controlSocket = configuration.controlSocket;
+    }
     if (controlSocket) {
       context.controlSocket = controlSocket;
     }
