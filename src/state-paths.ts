@@ -55,7 +55,7 @@ export function getStatePaths(
       ? stateDirectory
       : environment.VITE_LOCAL_TLS_RUNTIME_DIRECTORY ||
         pathApi.join(
-          environment.XDG_RUNTIME_DIR || os.tmpdir(),
+          platform === 'darwin' ? '/tmp' : environment.XDG_RUNTIME_DIR || os.tmpdir(),
           `vite-plugin-local-tls-${runtimeUserId}`,
           safeNamespace,
         );

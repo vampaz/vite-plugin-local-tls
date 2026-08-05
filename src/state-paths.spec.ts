@@ -24,7 +24,8 @@ describe('state paths', () => {
     expect(paths.stateDirectory).toBe(
       '/Users/tester/Library/Application Support/vite-plugin-local-tls/project-one',
     );
-    expect(paths.socketPath).toMatch(/control\.sock$/);
+    expect(paths.socketPath).toBe('/tmp/vite-plugin-local-tls-501/project-one/control.sock');
+    expect(Buffer.byteLength(paths.socketPath)).toBeLessThan(104);
     expect(paths.runtimeDirectory).toContain('vite-plugin-local-tls-501');
   });
 

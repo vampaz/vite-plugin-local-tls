@@ -295,7 +295,12 @@ export async function startServer(
 
 export async function disposeE2eContext(context: E2eContext): Promise<void> {
   await Promise.all([...context.servers].map((server) => server.stop().catch(() => undefined)));
-  await rm(context.root, { recursive: true, force: true });
+  await Promise.all([
+    rm(context.root, { recursive: true, force: true }),
+    process.platform === 'win32'
+      ? Promise.resolve()
+      : rm(context.paths.runtimeDirectory, { recursive: true, force: true }),
+  ]);
 }
 
 export async function readFixtureSource(context: E2eContext): Promise<string> {
