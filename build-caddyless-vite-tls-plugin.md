@@ -291,37 +291,37 @@ Every source test remains adjacent to its source file. Cross-package contract an
     - Verification: `npm run test -- src/control-lifecycle.spec.ts`
     - Commit: `test: prove route lease crash recovery`
 
-- [ ] Phase 3: Implement the dependency-free shared proxy
+- [x] Phase 3: Implement the dependency-free shared proxy
 
-  - [ ] Step 3.1: Proxy streaming HTTP/1.1 requests by exact Host
+  - [x] Step 3.1: Proxy streaming HTTP/1.1 requests by exact Host
     - Objective: Use `node:http` to forward methods, paths, query strings, streaming bodies, streaming responses, status, duplicate headers, cookies, trailers, aborts, and errors. Normalize Host case and explicit default ports. Return a safe diagnostic for unknown hosts.
     - Files: `src/proxy-server.ts`, `src/proxy-server.spec.ts`, `src/interfaces/proxy-options.ts`
     - Test file: `src/proxy-server.spec.ts`
     - Verification: `npm run test -- src/proxy-server.spec.ts`
     - Commit: `feat: proxy exact-host HTTP traffic`
 
-  - [ ] Step 3.2: Preserve forwarded headers, CORS behavior, and upstream Host overrides
+  - [x] Step 3.2: Preserve forwarded headers, CORS behavior, and upstream Host overrides
     - Objective: Match the current plugin's `cors` and `upstreamHostHeader` semantics and proxy `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Port`, and `X-Forwarded-Proto` consistently. Prevent proxy loops without modifying unrelated application responses.
     - Files: `src/proxy-server.ts`, `src/proxy-headers.spec.ts`
     - Test file: `src/proxy-headers.spec.ts`
     - Verification: `npm run test -- src/proxy-headers.spec.ts`
     - Commit: `feat: preserve proxy header behavior`
 
-  - [ ] Step 3.3: Bridge HTTP/1.1 WebSocket upgrades without a proxy dependency
+  - [x] Step 3.3: Bridge HTTP/1.1 WebSocket upgrades without a proxy dependency
     - Objective: Forward the original handshake, validate backend upgrade responses, preserve subprotocol and extension negotiation, forward buffered heads, pipe both directions, and terminate both sockets on error or close. Cover Vite HMR handshakes and ordinary application WebSockets.
     - Files: `src/proxy-server.ts`, `src/proxy-websocket.spec.ts`, `tests/fixtures/websocket-backend.ts`
     - Test file: `src/proxy-websocket.spec.ts`
     - Verification: `npm run test -- src/proxy-websocket.spec.ts`
     - Commit: `feat: proxy websocket upgrades`
 
-  - [ ] Step 3.4: Add HTTP/2 TLS compatibility and RFC 8441 WebSocket bridging
+  - [x] Step 3.4: Add HTTP/2 TLS compatibility and RFC 8441 WebSocket bridging
     - Objective: Use `node:http2.createSecureServer()` with `allowHTTP1`, translate HTTP/2 headers to the HTTP/1.1 Vite upstream, strip hop-by-hop headers, support extended CONNECT, verify the synthesized WebSocket accept hash, and preserve streaming semantics.
     - Files: `src/proxy-server.ts`, `src/proxy-http2.spec.ts`, `src/proxy-http2-websocket.spec.ts`
     - Test files: `src/proxy-http2.spec.ts`, `src/proxy-http2-websocket.spec.ts`
     - Verification: `npm run test -- src/proxy-http2.spec.ts src/proxy-http2-websocket.spec.ts`
     - Commit: `feat: serve HTTP2 and extended-connect websockets`
 
-  - [ ] Step 3.5: Bind IPv4 and IPv6 loopback listeners safely
+  - [x] Step 3.5: Bind IPv4 and IPv6 loopback listeners safely
     - Objective: Serve the same registry on `127.0.0.1` and `::1`, reach IPv4-only and IPv6-only upstreams, avoid LAN exposure, report partial-stack failures precisely, and detect a non-plugin listener already occupying the configured public port.
     - Files: `src/proxy-listeners.ts`, `src/proxy-listeners.spec.ts`, `src/proxy-server.ts`
     - Test file: `src/proxy-listeners.spec.ts`
