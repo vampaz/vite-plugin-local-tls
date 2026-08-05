@@ -154,29 +154,38 @@ function windowsConfigurationPath(runtimeDirectory: string): string {
   return path.join(runtimeDirectory, 's.json');
 }
 
-function windowsRunnerPath(runtimeDirectory: string): string {
-  return path.join(runtimeDirectory, 'r.cmd');
-}
-
 function windowsRuntimeKey(key: string): string {
   return createHash('sha256').update(key).digest('hex').slice(0, 12);
 }
 
-function windowsBatchQuote(value: string): string {
-  return windowsQuote(value.replaceAll('%', '%%'));
+function windowsTaskPath(filePath: string): string {
+  const localAppData = process.env.LOCALAPPDATA;
+  if (!localAppData) {
+    return filePath;
+  }
+  const relativePath = path.win32.relative(localAppData, filePath);
+  if (relativePath.startsWith('..') || path.win32.isAbsolute(relativePath)) {
+    return filePath;
+  }
+  return path.win32.join('%LOCALAPPDATA%', relativePath);
 }
 
-function windowsRunnerContents(
-  nodePath: string,
-  cliPath: string,
-  configurationPath: string,
-): string {
+function windowsTaskCommand(nodePath: string, cliPath: string, configurationPath: string): string {
+  return `${windowsQuote(windowsTaskPath(nodePath))} ${windowsTaskArguments(
+    cliPath,
+    configurationPath,
+  )}`;
+}
+
+function windowsTaskArguments(cliPath: string, configurationPath: string): string {
   return [
-    '@echo off',
-    `rem ${OWNER_MARKER}`,
-    `${windowsBatchQuote(nodePath)} ${windowsBatchQuote(cliPath)} proxy start --service --service-config ${windowsBatchQuote(configurationPath)}`,
-    '',
-  ].join('\r\n');
+    windowsQuote(windowsTaskPath(cliPath)),
+    'proxy',
+    'start',
+    '--service',
+    '--service-config',
+    windowsQuote(windowsTaskPath(configurationPath)),
+  ].join(' ');
 }
 
 function assertExpectedRecord(
@@ -511,7 +520,6 @@ async function installWindows(
   }
   const runtime = await installUserRuntime(options, safeServiceKey(options));
   const configurationPath = windowsConfigurationPath(runtime.runtimeDirectory);
-  const runnerPath = windowsRunnerPath(runtime.runtimeDirectory);
   const configuration: ServiceRuntimeConfiguration = {
     version: 1,
     owner: '@vampaz/vite-plugin-local-tls',
@@ -521,12 +529,10 @@ async function installWindows(
   await writeFile(configurationPath, `${JSON.stringify(configuration, null, 2)}\n`, {
     mode: 0o600,
   });
-  await writeFile(
-    runnerPath,
-    windowsRunnerContents(runtime.nodePath, runtime.cliPath, configurationPath),
-    { mode: 0o600 },
-  );
-  const command = `cmd.exe /D /S /C "${windowsQuote(runnerPath)}"`;
+  const command = windowsTaskCommand(runtime.nodePath, runtime.cliPath, configurationPath);
+  if (command.length > 261) {
+    throw new Error('Windows Task Scheduler command exceeds its 261-character limit.');
+  }
   await runner('schtasks.exe', [
     '/Create',
     '/TN',
@@ -633,22 +639,19 @@ export async function uninstallStartupService(
   } else if (record.platform === 'win32') {
     const task = await runner('schtasks.exe', ['/Query', '/TN', record.identifier, '/XML']);
     const configurationPath = windowsConfigurationPath(record.runtimeDirectory!);
-    const runnerPath = windowsRunnerPath(record.runtimeDirectory!);
     const configuration = JSON.parse(
       await readFile(configurationPath, 'utf8'),
     ) as ServiceRuntimeConfiguration;
-    const runnerContents = await readFile(runnerPath, 'utf8');
     const ownsConfiguration =
       configuration.version === 1 &&
       configuration.owner === '@vampaz/vite-plugin-local-tls' &&
       configuration.namespace === record.namespace &&
       configuration.controlSocket === record.controlSocket;
-    const ownsRunner =
-      runnerContents === windowsRunnerContents(record.nodePath, record.cliPath, configurationPath);
+    const taskPath = windowsTaskPath(record.nodePath);
+    const taskArguments = windowsTaskArguments(record.cliPath, configurationPath);
     const ownsTask =
       ownsConfiguration &&
-      ownsRunner &&
-      ['cmd.exe', runnerPath].every(
+      [taskPath, taskArguments].every(
         (value) => task.stdout.includes(value) || task.stdout.includes(xmlEscape(value)),
       );
     if (!ownsTask) {
@@ -660,7 +663,7 @@ export async function uninstallStartupService(
       await rm(record.runtimeDirectory, {
         recursive: true,
         force: true,
-        maxRetries: 100,
+        maxRetries: 10,
         retryDelay: 100,
       });
     }

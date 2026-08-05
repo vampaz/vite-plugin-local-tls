@@ -29,6 +29,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await rm(temporaryDirectory, { recursive: true, force: true });
 });
 
@@ -39,9 +40,8 @@ describe('Windows startup service', () => {
     const sourceCliPath = path.join(temporaryDirectory, 'cli.js');
     const runtimeDirectory = path.join(temporaryDirectory, 'r');
     const installedNodePath = path.join(runtimeDirectory, 'n.exe');
-    const installedCliPath = path.join(runtimeDirectory, 'c.js');
     const configurationPath = path.join(runtimeDirectory, 's.json');
-    const runnerPath = path.join(runtimeDirectory, 'r.cmd');
+    vi.stubEnv('LOCALAPPDATA', runtimeDirectory);
     await writeFile(sourceNodePath, 'node');
     await writeFile(sourceCliPath, "console.log('service');\n");
     const runner = vi.fn(async (_command: string, arguments_: string[]) => {
@@ -51,7 +51,8 @@ describe('Windows startup service', () => {
           throw new Error('Task does not exist.');
         }
         return {
-          stdout: `<Task><Command>cmd.exe /D /S /C ${runnerPath}</Command></Task>`,
+          stdout:
+            '<Task><Command>%LOCALAPPDATA%\\n.exe</Command><Arguments>&quot;%LOCALAPPDATA%\\c.js&quot; proxy start --service --service-config &quot;%LOCALAPPDATA%\\s.json&quot;</Arguments></Task>',
           stderr: '',
         };
       }
@@ -74,14 +75,12 @@ describe('Windows startup service', () => {
     expect(createCall?.[1]).toContain('LIMITED');
     expect(createCall?.[1]).toContain('ONLOGON');
     expect(createCall?.[1]).toContain('Vite Local TLS\\test');
-    expect(createCall?.[1].join(' ')).toContain('cmd.exe');
-    expect(createCall?.[1].join(' ')).toContain(runnerPath);
+    expect(createCall?.[1].join(' ')).toContain('%LOCALAPPDATA%\\n.exe');
+    expect(createCall?.[1].join(' ')).toContain('%LOCALAPPDATA%\\c.js');
+    expect(createCall?.[1].join(' ')).toContain('%LOCALAPPDATA%\\s.json');
     expect(createCall?.[1][createCall[1].indexOf('/TR') + 1].length).toBeLessThanOrEqual(261);
     expect(installed.record?.nodePath).toBe(installedNodePath);
     await expect(readFile(configurationPath, 'utf8')).resolves.toContain('"namespace": "test"');
-    await expect(readFile(runnerPath, 'utf8')).resolves.toContain('--service-config');
-    await expect(readFile(runnerPath, 'utf8')).resolves.toContain(installedNodePath);
-    await expect(readFile(runnerPath, 'utf8')).resolves.toContain(installedCliPath);
 
     await uninstallStartupService(options);
 

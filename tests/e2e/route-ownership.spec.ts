@@ -80,6 +80,7 @@ test('recovers a force-killed route and stale daemon metadata without touching s
   const oldState = JSON.parse(await readFile(e2e.paths.stateFile, 'utf8')) as { pid: number };
   const daemonHost = [...e2e.servers].find(({ child }) => child.pid === oldState.pid);
   expect(daemonHost).toBeDefined();
+  const survivingServer = daemonHost === survivor ? restarted : survivor;
   await daemonHost!.stop('SIGKILL');
   await expect
     .poll(async () => {
@@ -94,9 +95,8 @@ test('recovers a force-killed route and stale daemon metadata without touching s
 
   await expectMarker(
     page,
-    `https://daemon-survivor.localhost:${e2e.proxyPort}/`,
-    'daemon-survivor',
+    `https://${survivingServer.domains[0]}:${e2e.proxyPort}/`,
+    survivingServer.marker,
   );
-  expect(survivor.child.exitCode).toBeNull();
-  expect(restarted.child.exitCode).toBeNull();
+  expect(survivingServer.child.exitCode).toBeNull();
 });
