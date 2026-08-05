@@ -78,6 +78,7 @@ describe('reusable E2E workflow', () => {
     expect(commands).toContain('VITE_LOCAL_TLS_E2E_PARENT=$RUNNER_TEMP/vite-local-tls-e2e');
     expect(commands).toContain('npm run playwright:install -- --with-deps');
     expect(commands).toContain('npm run test:e2e');
+    expect(commands).toContain('npm run test:e2e:default-path');
     expect(commands).toContain('npm run test:e2e:matrix');
     expect(source).not.toMatch(/\bnpx\b/);
     expect(source).not.toMatch(/\bcaddy\b/i);

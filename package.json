@@ -59,6 +59,7 @@
     "format:check": "oxfmt --check .",
     "test": "vitest run",
     "test:e2e": "playwright test --config tests/e2e/playwright.config.ts",
+    "test:e2e:default-path": "VITE_TLS_DEFAULT_PATH=true playwright test --config tests/e2e/playwright.config.ts tests/e2e/default-path.spec.ts",
     "test:e2e:matrix": "bash tests/e2e/run-vite-matrix.sh",
     "verify:zero-deps": "npm run build && node scripts/verify-zero-runtime-dependencies.mjs",
     "verify:package": "npm run build && node scripts/verify-package.mjs",

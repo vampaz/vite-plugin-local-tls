@@ -134,7 +134,7 @@ export async function prepareE2eContext(): Promise<E2eContext> {
   const root = await mkdtemp(path.join(parentDirectory, 'vite-local-tls-e2e-'));
   const stateHome = path.join(root, 'home');
   const namespace = path.basename(root).slice(-6);
-  const proxyPort = await findAvailablePort();
+  const proxyPort = process.env.VITE_TLS_DEFAULT_PATH === 'true' ? 443 : await findAvailablePort();
   const fixtureDirectory = await installPackedPlayground(root);
   const environment = { ...process.env, HOME: stateHome };
   return {

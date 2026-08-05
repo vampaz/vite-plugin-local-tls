@@ -43,5 +43,8 @@ jobs:
       - name: Run complete end-to-end suite
         run: npm run test:e2e
 
+      - name: Prove packed default plugin on trusted port 443
+        run: npm run test:e2e:default-path
+
       - name: Run supported Vite matrix
         run: npm run test:e2e:matrix

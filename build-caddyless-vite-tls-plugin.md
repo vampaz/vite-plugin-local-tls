@@ -603,7 +603,7 @@ Every source test remains adjacent to its source file. Cross-package contract an
 
 - [ ] Phase 10: Close the full-replacement gaps before publication
 
-  - [ ] Step 10.1: Freeze the uncovered compatibility and default-path failures
+  - [x] Step 10.1: Freeze the uncovered compatibility and default-path failures
     - Objective: Add failing contract and integration tests for the old public helper names, option type, legacy configuration names, macOS system-service privileges, Windows boot-service privileges, and the packed plugin's normal zero-injection startup path. The tests must distinguish mocked adapter coverage from live platform evidence.
     - Files: `tests/contract/legacy-api-compatibility.spec.ts`, `src/service-install-macos.spec.ts`, `src/service-install-windows.spec.ts`, `tests/package/default-path.spec.ts`, `build-caddyless-vite-tls-plugin.md`
     - Verification: run each new focused test and confirm it fails for the intended missing behavior before implementation

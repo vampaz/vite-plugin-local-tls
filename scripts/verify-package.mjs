@@ -78,6 +78,7 @@ async function verifyInstalledPackage(temporaryDirectory, tarballPath) {
       `const value = await import('${packageName}');
 if (typeof value.default !== 'function' || typeof value.viteLocalTlsPlugin !== 'function') process.exit(1);
 if (typeof value.resolveLocalTlsDomains !== 'function' || typeof value.resolveLocalTlsUrl !== 'function') process.exit(1);
+if (typeof value.resolveCaddyTlsDomains !== 'function' || typeof value.resolveCaddyTlsUrl !== 'function') process.exit(1);
 if (typeof (await import('${packageName}/testing')).LocalTlsService !== 'function') process.exit(1);
 console.log('exports-ok');`,
     ],
@@ -97,13 +98,17 @@ console.log('exports-ok');`,
   await writeFile(
     path.join(temporaryDirectory, 'index.ts'),
     `import localTls, {
+  resolveCaddyTlsDomains,
   resolveLocalTlsDomains,
   type LocalTlsPluginOptions,
+  type ViteCaddyTlsPluginOptions,
 } from '${packageName}';
 
 const options: LocalTlsPluginOptions = { domain: 'types.localhost' };
+const legacyOptions: ViteCaddyTlsPluginOptions = { domain: 'legacy.localhost' };
 localTls(options);
 resolveLocalTlsDomains(options);
+resolveCaddyTlsDomains(legacyOptions);
 `,
   );
   await writeFile(

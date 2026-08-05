@@ -5,6 +5,7 @@ import { defineConfig } from 'vite';
 import {
   createViteLocalTlsPlugin,
   resolveLocalTlsDomains,
+  viteLocalTlsPlugin,
   type LocalTlsPluginOptions,
 } from '@vampaz/vite-plugin-local-tls';
 import {
@@ -15,7 +16,10 @@ import {
 } from '@vampaz/vite-plugin-local-tls/testing';
 
 const namespace = process.env.VITE_TLS_NAMESPACE ?? 'playground';
-const proxyPort = Number(process.env.VITE_TLS_PROXY_PORT ?? '9443');
+const useDefaultInfrastructure = process.env.VITE_TLS_DEFAULT_PATH === 'true';
+const proxyPort = useDefaultInfrastructure
+  ? 443
+  : Number(process.env.VITE_TLS_PROXY_PORT ?? '9443');
 const explicitDomains = process.env.VITE_TLS_DOMAINS?.split(',');
 const pluginOptions: LocalTlsPluginOptions = explicitDomains ? { domain: explicitDomains } : {};
 if (process.env.VITE_TLS_BASE_DOMAIN) {
@@ -126,22 +130,31 @@ export default defineConfig({
         server.httpServer?.on('upgrade', handleApplicationWebSocket);
       },
     },
-    createViteLocalTlsPlugin(
-      {
-        ...pluginOptions,
-        serviceNamespace: namespace,
-      },
-      dependencies,
-    ),
+    useDefaultInfrastructure
+      ? viteLocalTlsPlugin({
+          ...pluginOptions,
+          serviceNamespace: namespace,
+        })
+      : createViteLocalTlsPlugin(
+          {
+            ...pluginOptions,
+            serviceNamespace: namespace,
+          },
+          dependencies,
+        ),
   ],
   server: {
     port: Number(process.env.VITE_FIXTURE_PORT ?? '5173'),
     host: process.env.VITE_FIXTURE_HOST ?? '127.0.0.1',
-    hmr: {
-      protocol: 'wss',
-      host: domains[0] ?? 'localhost',
-      clientPort: proxyPort,
-    },
+    ...(useDefaultInfrastructure
+      ? {}
+      : {
+          hmr: {
+            protocol: 'wss' as const,
+            host: domains[0] ?? 'localhost',
+            clientPort: proxyPort,
+          },
+        }),
   },
   preview: {
     port: Number(process.env.VITE_FIXTURE_PORT ?? '4173'),
