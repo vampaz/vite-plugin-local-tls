@@ -11,8 +11,9 @@ import type { ServiceState } from './interfaces/service-state.js';
 import { startProxyListeners } from './proxy-listeners.js';
 import { createSecureProxyServer, ProxyServer } from './proxy-server.js';
 import { RouteRegistry } from './route-registry.js';
+import { dropServicePrivileges, transferServiceOwnership } from './service-privileges.js';
 
-const BOOTSTRAP_HOSTNAME = 'unconfigured.vite-local-tls.invalid';
+export const SERVICE_BOOTSTRAP_HOSTNAME = 'unconfigured.vite-local-tls.invalid';
 
 export class LocalTlsDaemon {
   readonly registry = new RouteRegistry();
@@ -31,7 +32,7 @@ export class LocalTlsDaemon {
       paths: options.paths,
       opensslPath: options.opensslPath,
       isHostnameRegistered: (hostname) =>
-        hostname === BOOTSTRAP_HOSTNAME ||
+        hostname === SERVICE_BOOTSTRAP_HOSTNAME ||
         this.registry.get(hostname) !== undefined ||
         this.#pendingHostnames.has(hostname),
     });
@@ -46,11 +47,28 @@ export class LocalTlsDaemon {
       return this.#state;
     }
     const authority = await this.#certificateManager.ensureCertificateAuthority();
-    const bootstrap = await this.#certificateManager.ensureLeafCertificate(BOOTSTRAP_HOSTNAME);
+    const bootstrap = await this.#certificateManager.ensureLeafCertificate(
+      SERVICE_BOOTSTRAP_HOSTNAME,
+    );
     const [bootstrapKey, bootstrapCertificate] = await Promise.all([
       readFile(bootstrap.keyPath),
       readFile(bootstrap.chainPath),
     ]);
+    if (this.#options.runAsUser) {
+      const transferOwnership = this.#options.transferOwnership ?? transferServiceOwnership;
+      await transferOwnership(this.#options.runAsUser, [
+        this.#options.paths.stateDirectory,
+        this.#options.paths.runtimeDirectory,
+        this.#options.paths.certificateDirectory,
+        this.#options.paths.importedCertificateDirectory,
+        authority.certificatePath,
+        authority.keyPath,
+        this.#options.paths.caStatePath,
+        bootstrap.certificatePath,
+        bootstrap.keyPath,
+        bootstrap.chainPath,
+      ]);
+    }
     const proxy = new ProxyServer({
       registry: this.registry,
       publicPort: this.#options.port && this.#options.port > 0 ? this.#options.port : 443,
@@ -64,6 +82,10 @@ export class LocalTlsDaemon {
             cert: bootstrapCertificate,
           }),
       });
+      if (this.#options.runAsUser) {
+        const dropPrivileges = this.#options.dropPrivileges ?? dropServicePrivileges;
+        await dropPrivileges(this.#options.runAsUser, []);
+      }
       this.#controlServer = new ControlServer({
         socketPath: this.#options.paths.socketPath,
         registry: this.registry,

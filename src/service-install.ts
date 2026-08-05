@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type {
@@ -64,11 +64,78 @@ function safeServiceKey(options: ServiceInstallOptions): string {
   if (options.controlSocket) {
     validateDefinitionValue(options.controlSocket, 'Control socket');
   }
+  if (options.runtimeInstallDirectory) {
+    validateDefinitionValue(options.runtimeInstallDirectory, 'Service runtime directory');
+  }
   return key;
 }
 
 function recordPath(options: ServiceInstallOptions): string {
   return path.join(options.paths.stateDirectory, 'service-install.json');
+}
+
+function serviceIdentifier(platform: NodeJS.Platform, key: string): string {
+  return platform === 'darwin'
+    ? `com.vampaz.vite-local-tls.${key}`
+    : platform === 'win32'
+      ? `Vite Local TLS\\${key}`
+      : `vite-local-tls-${key}`;
+}
+
+function expectedDefinitionPath(
+  options: ServiceInstallOptions,
+  platform: NodeJS.Platform,
+  identifier: string,
+): string | null {
+  if (platform === 'darwin') {
+    return path.join(
+      options.definitionDirectory ?? '/Library/LaunchDaemons',
+      `${identifier}.plist`,
+    );
+  }
+  if (platform === 'linux') {
+    return path.join(options.definitionDirectory ?? '/etc/systemd/system', `${identifier}.service`);
+  }
+  return null;
+}
+
+function expectedRuntimeDirectory(
+  options: ServiceInstallOptions,
+  platform: NodeJS.Platform,
+  key: string,
+): string {
+  if (options.runtimeInstallDirectory) {
+    return options.runtimeInstallDirectory;
+  }
+  return platform === 'darwin'
+    ? path.join('/Library/Application Support/vite-plugin-local-tls', key)
+    : path.join(options.paths.stateDirectory, 'service-runtime');
+}
+
+function assertExpectedRecord(
+  options: ServiceInstallOptions,
+  record: ServiceInstallationRecord,
+): void {
+  const platform = options.platform ?? process.platform;
+  const key = safeServiceKey(options);
+  const identifier = serviceIdentifier(platform, key);
+  const definitionPath = expectedDefinitionPath(options, platform, identifier);
+  if (record.identifier !== identifier || record.definitionPath !== definitionPath) {
+    throw new Error('Service installation record contains unexpected system targets.');
+  }
+  if (!record.runtimeDirectory) {
+    return;
+  }
+  const runtimeDirectory = expectedRuntimeDirectory(options, platform, key);
+  const cliPath = path.join(runtimeDirectory, platform === 'darwin' ? 'cli.js' : `cli-${key}.js`);
+  const nodePath = platform === 'darwin' ? path.join(runtimeDirectory, 'node') : options.nodePath;
+  if (
+    record.runtimeDirectory !== runtimeDirectory ||
+    record.cliPath !== cliPath ||
+    record.nodePath !== nodePath
+  ) {
+    throw new Error('Service installation record contains an unexpected runtime target.');
+  }
 }
 
 async function readRecord(
@@ -85,6 +152,7 @@ async function readRecord(
     ) {
       throw new Error('Service installation record does not match this namespace and platform.');
     }
+    assertExpectedRecord(options, record);
     return record;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -118,6 +186,10 @@ async function assertOwnedDefinition(definitionPath: string): Promise<void> {
 }
 
 function launchdDefinition(options: ServiceInstallOptions, identifier: string): string {
+  const user = os.userInfo();
+  const username = options.username ?? user.username;
+  const uid = options.uid ?? user.uid;
+  const gid = options.gid ?? user.gid;
   const arguments_ = [
     options.nodePath,
     options.cliPath,
@@ -126,6 +198,10 @@ function launchdDefinition(options: ServiceInstallOptions, identifier: string): 
     '--service',
     '--namespace',
     options.namespace,
+    '--run-as-uid',
+    String(uid),
+    '--run-as-gid',
+    String(gid),
   ];
   if (options.controlSocket) {
     arguments_.push('--control-socket', options.controlSocket);
@@ -142,6 +218,17 @@ function launchdDefinition(options: ServiceInstallOptions, identifier: string): 
     '  <array>',
     ...arguments_.map((argument) => `    <string>${xmlEscape(argument)}</string>`),
     '  </array>',
+    '  <key>EnvironmentVariables</key>',
+    '  <dict>',
+    '    <key>HOME</key>',
+    `    <string>${xmlEscape(options.homeDirectory ?? os.homedir())}</string>`,
+    '    <key>USER</key>',
+    `    <string>${xmlEscape(username)}</string>`,
+    '    <key>LOGNAME</key>',
+    `    <string>${xmlEscape(username)}</string>`,
+    '    <key>VITE_LOCAL_TLS_USER_ID</key>',
+    `    <string>${uid}</string>`,
+    '  </dict>',
     '  <key>RunAtLoad</key>',
     '  <true/>',
     '  <key>KeepAlive</key>',
@@ -156,6 +243,21 @@ function launchdDefinition(options: ServiceInstallOptions, identifier: string): 
     '</plist>',
     '',
   ].join('\n');
+}
+
+async function installUserRuntime(
+  options: ServiceInstallOptions,
+  key: string,
+): Promise<{ cliPath: string; runtimeDirectory: string }> {
+  const runtimeDirectory =
+    options.runtimeInstallDirectory ?? path.join(options.paths.stateDirectory, 'service-runtime');
+  const cliPath = path.join(runtimeDirectory, `cli-${key}.js`);
+  await mkdir(runtimeDirectory, { recursive: true, mode: 0o700 });
+  await copyFile(options.cliPath, cliPath);
+  if ((options.platform ?? process.platform) !== 'win32') {
+    await chmod(cliPath, 0o700);
+  }
+  return { cliPath, runtimeDirectory };
 }
 
 function systemdDefinition(options: ServiceInstallOptions): string {
@@ -216,32 +318,68 @@ async function installMacos(
   options: ServiceInstallOptions,
   runner: ServiceInstallCommandRunner,
   identifier: string,
-): Promise<string> {
-  const homeDirectory = options.homeDirectory ?? os.homedir();
-  const definitionPath = path.join(homeDirectory, 'Library', 'LaunchAgents', `${identifier}.plist`);
-  await mkdir(path.dirname(definitionPath), { recursive: true, mode: 0o700 });
+): Promise<{
+  definitionPath: string;
+  nodePath: string;
+  cliPath: string;
+  runtimeDirectory: string;
+}> {
+  const definitionPath = path.join(
+    options.definitionDirectory ?? '/Library/LaunchDaemons',
+    `${identifier}.plist`,
+  );
+  const runtimeDirectory = expectedRuntimeDirectory(options, 'darwin', safeServiceKey(options));
+  const nodePath = path.join(runtimeDirectory, 'node');
+  const cliPath = path.join(runtimeDirectory, 'cli.js');
+  const temporaryDefinitionPath = path.join(
+    options.paths.stateDirectory,
+    `${identifier}.plist.tmp`,
+  );
   await assertOwnedDefinition(definitionPath);
-  await writeFile(definitionPath, launchdDefinition(options, identifier), { mode: 0o600 });
-  const domain = `gui/${options.uid ?? process.getuid?.() ?? os.userInfo().uid}`;
-  await runner('launchctl', ['bootout', domain, definitionPath]).catch(() => undefined);
-  await runner('launchctl', ['bootstrap', domain, definitionPath]);
-  await runner('launchctl', ['enable', `${domain}/${identifier}`]);
-  await runner('launchctl', ['kickstart', '-k', `${domain}/${identifier}`]);
-  return definitionPath;
+  await writeFile(
+    temporaryDefinitionPath,
+    launchdDefinition({ ...options, nodePath, cliPath }, identifier),
+    { mode: 0o600 },
+  );
+  const elevated = elevatedRunner(options);
+  async function runElevated(
+    command: string,
+    arguments_: string[],
+  ): Promise<ServiceInstallCommandResult> {
+    return runner(
+      elevated.command || command,
+      elevated.command ? elevated.arguments_(command, arguments_) : arguments_,
+    );
+  }
+  try {
+    await runElevated('mkdir', ['-p', runtimeDirectory]);
+    await runElevated('install', ['-m', '0755', options.nodePath, nodePath]);
+    await runElevated('install', ['-m', '0644', options.cliPath, cliPath]);
+    await runElevated('install', ['-m', '0644', temporaryDefinitionPath, definitionPath]);
+    await runElevated('launchctl', ['bootout', `system/${identifier}`]).catch(() => undefined);
+    await runElevated('launchctl', ['bootstrap', 'system', definitionPath]);
+    await runElevated('launchctl', ['enable', `system/${identifier}`]);
+    await runElevated('launchctl', ['kickstart', '-k', `system/${identifier}`]);
+  } finally {
+    await unlink(temporaryDefinitionPath).catch(() => undefined);
+  }
+  return { definitionPath, nodePath, cliPath, runtimeDirectory };
 }
 
 async function installLinux(
   options: ServiceInstallOptions,
   runner: ServiceInstallCommandRunner,
   identifier: string,
-): Promise<string> {
+): Promise<{ definitionPath: string; cliPath: string; runtimeDirectory: string }> {
   const definitionPath = path.join(
     options.definitionDirectory ?? '/etc/systemd/system',
     `${identifier}.service`,
   );
   await assertOwnedDefinition(definitionPath);
+  const runtime = await installUserRuntime(options, safeServiceKey(options));
+  const serviceOptions = { ...options, cliPath: runtime.cliPath };
   const temporaryPath = path.join(options.paths.stateDirectory, `${identifier}.service.tmp`);
-  await writeFile(temporaryPath, systemdDefinition(options), { mode: 0o600 });
+  await writeFile(temporaryPath, systemdDefinition(serviceOptions), { mode: 0o600 });
   const elevated = elevatedRunner(options);
   const runElevated = async function runElevated(
     command: string,
@@ -259,7 +397,7 @@ async function installLinux(
   } finally {
     await unlink(temporaryPath).catch(() => undefined);
   }
-  return definitionPath;
+  return { definitionPath, cliPath: runtime.cliPath, runtimeDirectory: runtime.runtimeDirectory };
 }
 
 async function windowsTaskExists(
@@ -275,13 +413,14 @@ async function installWindows(
   options: ServiceInstallOptions,
   runner: ServiceInstallCommandRunner,
   identifier: string,
-): Promise<void> {
+): Promise<{ cliPath: string; runtimeDirectory: string }> {
   if (!(await readRecord(options)) && (await windowsTaskExists(runner, identifier))) {
     throw new Error(`Refusing to replace unrelated scheduled task: ${identifier}`);
   }
+  const runtime = await installUserRuntime(options, safeServiceKey(options));
   const command = [
     windowsQuote(options.nodePath),
-    windowsQuote(options.cliPath),
+    windowsQuote(runtime.cliPath),
     'proxy',
     'start',
     '--service',
@@ -304,6 +443,7 @@ async function installWindows(
     '/F',
   ]);
   await runner('schtasks.exe', ['/Run', '/TN', identifier]);
+  return runtime;
 }
 
 export async function installStartupService(
@@ -313,19 +453,26 @@ export async function installStartupService(
   const platform = options.platform ?? process.platform;
   const key = safeServiceKey(options);
   const runner = options.runner ?? runCommand;
-  const identifier =
-    platform === 'darwin'
-      ? `com.vampaz.vite-local-tls.${key}`
-      : platform === 'win32'
-        ? `Vite Local TLS\\${key}`
-        : `vite-local-tls-${key}`;
+  const identifier = serviceIdentifier(platform, key);
   let definitionPath: string | null = null;
+  let installedNodePath = options.nodePath;
+  let installedCliPath = options.cliPath;
+  let runtimeDirectory: string | undefined;
   if (platform === 'darwin') {
-    definitionPath = await installMacos(options, runner, identifier);
+    const installed = await installMacos(options, runner, identifier);
+    definitionPath = installed.definitionPath;
+    installedNodePath = installed.nodePath;
+    installedCliPath = installed.cliPath;
+    runtimeDirectory = installed.runtimeDirectory;
   } else if (platform === 'linux') {
-    definitionPath = await installLinux(options, runner, identifier);
+    const installed = await installLinux(options, runner, identifier);
+    definitionPath = installed.definitionPath;
+    installedCliPath = installed.cliPath;
+    runtimeDirectory = installed.runtimeDirectory;
   } else if (platform === 'win32') {
-    await installWindows(options, runner, identifier);
+    const installed = await installWindows(options, runner, identifier);
+    installedCliPath = installed.cliPath;
+    runtimeDirectory = installed.runtimeDirectory;
   } else {
     throw new Error(`Unsupported service platform: ${platform}`);
   }
@@ -335,8 +482,9 @@ export async function installStartupService(
     namespace: options.namespace,
     identifier,
     definitionPath,
-    nodePath: options.nodePath,
-    cliPath: options.cliPath,
+    nodePath: installedNodePath,
+    cliPath: installedCliPath,
+    runtimeDirectory,
     controlSocket: options.controlSocket ?? null,
     installedAt: new Date().toISOString(),
   };
@@ -353,10 +501,21 @@ export async function uninstallStartupService(
   }
   const runner = options.runner ?? runCommand;
   if (record.platform === 'darwin') {
-    const domain = `gui/${options.uid ?? process.getuid?.() ?? os.userInfo().uid}`;
-    await runner('launchctl', ['bootout', domain, record.definitionPath!]).catch(() => undefined);
     await assertOwnedDefinition(record.definitionPath!);
-    await unlink(record.definitionPath!);
+    const elevated = elevatedRunner(options);
+    async function runElevated(command: string, arguments_: string[]): Promise<void> {
+      await runner(
+        elevated.command || command,
+        elevated.command ? elevated.arguments_(command, arguments_) : arguments_,
+      );
+    }
+    await runElevated('launchctl', ['bootout', `system/${record.identifier}`]).catch(
+      () => undefined,
+    );
+    await runElevated('rm', ['-f', record.definitionPath!]);
+    if (record.runtimeDirectory) {
+      await runElevated('rm', ['-rf', record.runtimeDirectory]);
+    }
   } else if (record.platform === 'linux') {
     await assertOwnedDefinition(record.definitionPath!);
     const elevated = elevatedRunner(options);
@@ -369,6 +528,9 @@ export async function uninstallStartupService(
     await runElevated('systemctl', ['disable', '--now', `${record.identifier}.service`]);
     await runElevated('rm', ['-f', '--', record.definitionPath!]);
     await runElevated('systemctl', ['daemon-reload']);
+    if (record.runtimeDirectory) {
+      await rm(record.runtimeDirectory, { recursive: true, force: true });
+    }
   } else if (record.platform === 'win32') {
     const task = await runner('schtasks.exe', ['/Query', '/TN', record.identifier, '/XML']);
     const ownsTask = [record.nodePath, record.cliPath, '--service', record.namespace].every(
@@ -379,6 +541,9 @@ export async function uninstallStartupService(
     }
     await runner('schtasks.exe', ['/End', '/TN', record.identifier]).catch(() => undefined);
     await runner('schtasks.exe', ['/Delete', '/TN', record.identifier, '/F']);
+    if (record.runtimeDirectory) {
+      await rm(record.runtimeDirectory, { recursive: true, force: true });
+    }
   }
   await unlink(recordPath(options));
   return { installed: false, record };

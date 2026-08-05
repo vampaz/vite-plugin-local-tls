@@ -5,7 +5,7 @@ import { get } from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 import { connect } from 'node:tls';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestCertificate } from '../tests/fixtures/test-certificate.js';
 import { CertificateImportStore } from './certificate-import.js';
 import { ControlClient } from './control-client.js';
@@ -54,6 +54,29 @@ afterEach(async () => {
 });
 
 describe('LocalTlsDaemon', () => {
+  it('drops service privileges after binding and before publishing readiness', async () => {
+    const paths = getStatePaths(namespace, process.platform, { HOME: temporaryDirectory });
+    const transferOwnership = vi.fn(async () => undefined);
+    const dropPrivileges = vi.fn(async () => undefined);
+    daemon = new LocalTlsDaemon({
+      paths,
+      opensslPath: 'openssl',
+      port: 0,
+      runAsUser: { uid: 501, gid: 20 },
+      transferOwnership,
+      dropPrivileges,
+    });
+
+    await daemon.start();
+
+    expect(transferOwnership).toHaveBeenCalledWith(
+      { uid: 501, gid: 20 },
+      expect.arrayContaining([paths.stateDirectory, paths.runtimeDirectory, paths.caKeyPath]),
+    );
+    expect(dropPrivileges).toHaveBeenCalledWith({ uid: 501, gid: 20 }, []);
+    expect(await access(paths.stateFile)).toBeUndefined();
+  });
+
   it('acknowledges readiness only after TLS and control are active', async () => {
     const backendPort = await listen(backend);
     const paths = getStatePaths(namespace, process.platform, { HOME: temporaryDirectory });

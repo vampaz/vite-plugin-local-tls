@@ -615,8 +615,8 @@ Every source test remains adjacent to its source file. Cross-package contract an
     - Verification: focused compatibility tests, typecheck, lint, and format check
     - Commit: `feat: preserve legacy plugin compatibility`
 
-  - [ ] Step 10.3: Make the shared port-443 service genuinely privileged and durable
-    - Objective: Replace the macOS user LaunchAgent with a root LaunchDaemon, install Unix service definitions through elevation, run Windows at boot as `SYSTEM` with the highest run level, retain Linux `CAP_NET_BIND_SERVICE`, and make install/uninstall ownership checks cover the system definitions. Ensure the service has a stable executable entry point and does not depend on a disposable consumer checkout remaining in place.
+  - [x] Step 10.3: Make the shared port-443 service genuinely privileged and durable
+    - Objective: Replace the macOS user LaunchAgent with a root LaunchDaemon that binds the low port and immediately drops to the installing user, install Unix service definitions through elevation, retain Linux `CAP_NET_BIND_SERVICE`, retain a current-user Windows logon task where low ports do not require elevation, and make install/uninstall ownership checks cover every definition. Ensure the service has a stable executable entry point and does not depend on a disposable consumer checkout remaining in place.
     - Files: `src/service-install.ts`, `src/interfaces/service-install-options.ts`, `src/cli.ts`, service-install tests, `README.md`, `SECURITY.md`
     - Verification: focused macOS/Linux/Windows service tests plus a live macOS install/start/status/uninstall exercise on an isolated namespace and listener, without touching an unrelated Caddy process
     - Commit: `fix: install a durable privileged TLS service`
@@ -650,7 +650,7 @@ Every source test remains adjacent to its source file. Cross-package contract an
 - [x] `internalTls` true, false, and omitted pass the frozen local, loopback, and custom-domain certificate-policy matrix; imported keys and certificates are exact-host validated and private.
 - [ ] The packed package installs in a clean Vite fixture, exposes valid ESM, types, plugin, and CLI entry points, and starts through the default public plugin API without injected infrastructure.
 - [ ] Existing consumers can retain the old helper imports, option type, and legacy configuration names while migrating off the Caddy-backed package.
-- [ ] The normal macOS installation uses a privileged system service that can bind port 443; Windows starts the proxy at boot as `SYSTEM`; Linux retains only the capability required for the low port.
+- [ ] The normal macOS installation binds port 443 through a root-owned system definition and drops to the installing user; Linux retains only the low-port capability; Windows uses the matching user's state, trust, and control identity.
 - [ ] Every publishable change requires a Changeset and the `Version Packages` pull request is generated through the same Changesets action flow.
 - [x] Pull requests and `master` run the same Tests gate; release checks out the exact successful Tests `head_sha` and cannot run after a failed, cancelled, or stale result.
 - [ ] npm publication uses the configured `release.yml` trusted publisher, no long-lived publish token, and produces provenance whose `gitHead` matches the tested commit.

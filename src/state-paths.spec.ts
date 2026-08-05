@@ -16,12 +16,16 @@ afterEach(async () => {
 
 describe('state paths', () => {
   it('uses the macOS Application Support directory and a Unix socket', () => {
-    const paths = getStatePaths('Project One', 'darwin', { HOME: '/Users/tester' });
+    const paths = getStatePaths('Project One', 'darwin', {
+      HOME: '/Users/tester',
+      VITE_LOCAL_TLS_USER_ID: '501',
+    });
 
     expect(paths.stateDirectory).toBe(
       '/Users/tester/Library/Application Support/vite-plugin-local-tls/project-one',
     );
     expect(paths.socketPath).toMatch(/control\.sock$/);
+    expect(paths.runtimeDirectory).toContain('vite-plugin-local-tls-501');
   });
 
   it('uses XDG directories on Linux and compacts long namespaces', () => {

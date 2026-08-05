@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -33,8 +33,12 @@ afterEach(async () => {
 });
 
 describe('Windows startup service', () => {
-  it('creates and removes a limited current-user task with exact arguments', async () => {
+  it('creates and removes a current-user logon task with a durable CLI copy', async () => {
     let queryCount = 0;
+    const sourceCliPath = path.join(temporaryDirectory, 'cli.js');
+    const runtimeDirectory = path.join(temporaryDirectory, 'service-runtime');
+    const installedCliPath = path.join(runtimeDirectory, 'cli-test.js');
+    await writeFile(sourceCliPath, "console.log('service');\n");
     const runner = vi.fn(async (_command: string, arguments_: string[]) => {
       if (arguments_[0] === '/Query') {
         queryCount += 1;
@@ -42,8 +46,7 @@ describe('Windows startup service', () => {
           throw new Error('Task does not exist.');
         }
         return {
-          stdout:
-            '<Task><Command>C:\\Program Files\\nodejs\\node.exe C:\\project\\dist\\cli.js --service test</Command></Task>',
+          stdout: `<Task><Command>C:\\Program Files\\nodejs\\node.exe ${installedCliPath} --service test</Command></Task>`,
           stderr: '',
         };
       }
@@ -54,7 +57,8 @@ describe('Windows startup service', () => {
       namespace: 'test',
       paths: statePaths(),
       nodePath: 'C:\\Program Files\\nodejs\\node.exe',
-      cliPath: 'C:\\project\\dist\\cli.js',
+      cliPath: sourceCliPath,
+      runtimeInstallDirectory: runtimeDirectory,
       runner,
     };
 
@@ -63,8 +67,10 @@ describe('Windows startup service', () => {
     const createCall = runner.mock.calls.find(([, arguments_]) => arguments_[0] === '/Create');
     expect(createCall?.[0]).toBe('schtasks.exe');
     expect(createCall?.[1]).toContain('LIMITED');
+    expect(createCall?.[1]).toContain('ONLOGON');
     expect(createCall?.[1]).toContain('Vite Local TLS\\test');
     expect(createCall?.[1].join(' ')).toContain('"C:\\Program Files\\nodejs\\node.exe"');
+    expect(createCall?.[1].join(' ')).toContain(installedCliPath);
     expect(createCall?.[1].join(' ')).toContain('--service');
 
     await uninstallStartupService(options);
@@ -87,9 +93,10 @@ describe('Windows startup service', () => {
       namespace: 'test',
       paths: statePaths(),
       nodePath: 'C:\\node.exe',
-      cliPath: 'C:\\cli.js',
+      cliPath: path.join(temporaryDirectory, 'cli.js'),
       runner,
     };
+    await writeFile(options.cliPath, "console.log('service');\n");
 
     await expect(installStartupService(options)).rejects.toThrow(/unrelated scheduled task/);
     expect(runner.mock.calls.some(([, arguments_]) => arguments_[0] === '/Create')).toBe(false);

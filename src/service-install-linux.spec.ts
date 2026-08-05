@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -47,13 +47,14 @@ describe('Linux startup service', () => {
       namespace: 'test',
       paths: statePaths(),
       nodePath: '/usr/bin/node',
-      cliPath: '/project/dist/cli.js',
+      cliPath: path.join(temporaryDirectory, 'cli.js'),
       homeDirectory: '/home/carlos',
       username: 'carlos',
       definitionDirectory: path.join(temporaryDirectory, 'systemd'),
       runner,
       useSudo: true,
     };
+    await writeFile(options.cliPath, "console.log('service');\n");
 
     const result = await installStartupService(options);
 
@@ -62,6 +63,7 @@ describe('Linux startup service', () => {
     expect(installedDefinition).toContain('CapabilityBoundingSet=CAP_NET_BIND_SERVICE');
     expect(installedDefinition).toContain('NoNewPrivileges=true');
     expect(installedDefinition).toContain('"--service"');
+    expect(installedDefinition).toContain('service-runtime/cli-test.js');
     expect(installedDefinition).not.toContain('User=root');
     expect(runner).toHaveBeenCalledWith('sudo', [
       '--',

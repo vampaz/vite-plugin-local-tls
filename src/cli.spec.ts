@@ -121,6 +121,20 @@ describe('vite-local-tls CLI', () => {
     });
   });
 
+  it('passes a complete service privilege-drop identity to proxy start', async () => {
+    await runCli(['proxy', 'start', '--service', '--run-as-uid', '501', '--run-as-gid', '20'], {
+      actions,
+      io,
+    });
+
+    expect(actions.proxyStart).toHaveBeenCalledWith({
+      namespace: 'default',
+      serviceMode: true,
+      runAsUid: 501,
+      runAsGid: 20,
+    });
+  });
+
   it('passes an alternate control socket through infrastructure commands', async () => {
     await runCli(['proxy', 'status', '--control-socket', '/tmp/team.sock', '--namespace', 'team'], {
       actions,

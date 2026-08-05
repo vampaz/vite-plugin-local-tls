@@ -28,6 +28,8 @@ export function getStatePaths(
   const userName = (environment.USERNAME || environment.USER || os.userInfo().username)
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '-');
+  const runtimeUserId =
+    environment.VITE_LOCAL_TLS_USER_ID || process.getuid?.() || os.userInfo().username;
   const stateDirectory =
     platform === 'win32'
       ? pathApi.join(
@@ -53,7 +55,7 @@ export function getStatePaths(
       ? stateDirectory
       : pathApi.join(
           environment.XDG_RUNTIME_DIR || os.tmpdir(),
-          `vite-plugin-local-tls-${process.getuid?.() ?? os.userInfo().username}`,
+          `vite-plugin-local-tls-${runtimeUserId}`,
           safeNamespace,
         );
   const socketPath =

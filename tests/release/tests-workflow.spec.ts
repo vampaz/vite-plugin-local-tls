@@ -34,13 +34,32 @@ describe('Tests workflow', () => {
 
   it('runs install, checks, tests, and build on Node 24', async () => {
     const { source, workflow } = await readWorkflow('tests.yml');
-    const commands = allRunCommands(workflow);
+    const commands = (workflow.jobs['unit-package'].steps as Array<Record<string, string>>).flatMap(
+      (step) => (step.run ? [step.run] : []),
+    );
 
     expect(source).toContain('actions/checkout@v7');
     expect(source).toContain('actions/setup-node@v7');
     expect(source).toContain('node-version: 24');
     expect(source).toContain('cache-dependency-path: package-lock.json');
     expect(commands).toEqual(['npm ci', 'npm run check', 'npm run test', 'npm run build']);
+  });
+
+  it('proves the installed startup service on Linux, macOS, and Windows', async () => {
+    const { source, workflow } = await readWorkflow('tests.yml');
+    const job = workflow.jobs['service-smoke'];
+    const commands = (job.steps as Array<Record<string, string>>).flatMap((step) =>
+      step.run ? [step.run] : [],
+    );
+
+    expect(job.strategy.matrix.os).toEqual(['ubuntu-latest', 'macos-latest', 'windows-latest']);
+    expect(source).toContain('actions/checkout@v7');
+    expect(source).toContain('actions/setup-node@v7');
+    expect(commands).toEqual([
+      'npm ci',
+      'npm run build',
+      'node scripts/verify-service-platform.mjs',
+    ]);
   });
 });
 

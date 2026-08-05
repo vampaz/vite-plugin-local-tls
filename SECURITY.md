@@ -35,7 +35,7 @@ OS trust-store success does not guarantee that every browser surface uses that s
 
 Certificate authoring is delegated to the discovered `openssl` executable. Trust changes use the native platform tool: `security` on macOS; `update-ca-certificates`, `update-ca-trust`, or `trust` on Linux; and `certutil` on Windows or WSL. Review privilege prompts before accepting them.
 
-Service installation writes only definitions carrying the package ownership marker. Uninstall verifies that marker or the exact recorded Windows task command before removal. State and service namespaces are sanitized and collision-resistant.
+Service installation writes only definitions carrying the package ownership marker. On macOS, the root-owned LaunchDaemon runs a root-owned copy of Node and the bundled CLI, binds the low port, transfers generated-file ownership, clears supplementary groups, and drops its group and user IDs before exposing the control channel or accepting routes. Linux runs the durable CLI copy as the installing user with only `CAP_NET_BIND_SERVICE`; Windows uses a durable CLI copy in a current-user logon task. Uninstall verifies the system-definition marker or the exact recorded Windows task command before removing the definition and copied runtime. State and service namespaces are sanitized and collision-resistant.
 
 ## Reporting a vulnerability
 

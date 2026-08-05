@@ -5,6 +5,7 @@ import { readFile, rm, unlink } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { CertificateImportStore } from './certificate-import.js';
 import { CertificateManager } from './certificates.js';
+import { SERVICE_BOOTSTRAP_HOSTNAME } from './daemon.js';
 import type {
   CliActions,
   CliCertificateImportRequest,
@@ -88,6 +89,18 @@ function requireOption(arguments_: string[], name: string): string {
   return value;
 }
 
+function takeIntegerOption(arguments_: string[], name: string): number | undefined {
+  const value = takeOption(arguments_, name);
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error(`${name} requires a non-negative integer.`);
+  }
+  return parsed;
+}
+
 function requireNoArguments(arguments_: string[]): void {
   if (arguments_.length > 0) {
     throw new Error(`Unexpected argument: ${arguments_[0]}`);
@@ -110,11 +123,16 @@ function createService(context: CliContext): LocalTlsService {
   if (!requirements.opensslPath) {
     throw new Error('OpenSSL is required. Install openssl and ensure it is on PATH.');
   }
+  const runAsUser =
+    context.runAsUid !== undefined && context.runAsGid !== undefined
+      ? { uid: context.runAsUid, gid: context.runAsGid }
+      : undefined;
   return new LocalTlsService({
     paths: resolvePaths(context),
     opensslPath: requirements.opensslPath,
     namespace: context.namespace,
     port: 443,
+    ...(runAsUser ? { runAsUser } : {}),
   });
 }
 
@@ -202,15 +220,17 @@ function createDefaultCliActions(): CliActions {
       }
       return (await new TrustStore({ requirements, authority }).verify()).trusted;
     }
-    let state = await service.autoStart({
-      isTrusted,
-      async trust(): Promise<void> {
-        await trust(request);
-      },
-      async installService(): Promise<void> {
-        await serviceInstall(request);
-      },
-    });
+    let state = request.serviceMode
+      ? await service.ensureRunning()
+      : await service.autoStart({
+          isTrusted,
+          async trust(): Promise<void> {
+            await trust(request);
+          },
+          async installService(): Promise<void> {
+            await serviceInstall(request);
+          },
+        });
     let stopping = false;
     ownedService = service.ownsStartedDaemon ? service : null;
     async function stopOwnedService(): Promise<void> {
@@ -224,12 +244,7 @@ function createDefaultCliActions(): CliActions {
       while (!stopping && !service.ownsStartedDaemon) {
         await delay(500);
         if (!(await service.status()).running) {
-          state = await service.autoStart({
-            isTrusted,
-            interactive: false,
-            trust: async () => undefined,
-            installService: async () => undefined,
-          });
+          state = await service.ensureRunning();
           ownedService = service.ownsStartedDaemon ? service : null;
         }
       }
@@ -246,6 +261,17 @@ function createDefaultCliActions(): CliActions {
   }
 
   async function serviceInstall(context: CliContext): Promise<unknown> {
+    const requirements = inspectSystemRequirements();
+    if (!requirements.opensslPath) {
+      throw new Error('OpenSSL is required. Install openssl and ensure it is on PATH.');
+    }
+    const manager = new CertificateManager({
+      paths: resolvePaths(context),
+      opensslPath: requirements.opensslPath,
+      isHostnameRegistered: (hostname) => hostname === SERVICE_BOOTSTRAP_HOSTNAME,
+    });
+    await manager.ensureCertificateAuthority();
+    await manager.ensureLeafCertificate(SERVICE_BOOTSTRAP_HOSTNAME);
     return installStartupService({
       namespace: context.namespace,
       paths: resolvePaths(context),
@@ -405,9 +431,18 @@ export async function runCli(
   try {
     const namespace = takeOption(parsedArguments, '--namespace') ?? 'default';
     const controlSocket = takeOption(parsedArguments, '--control-socket');
+    const runAsUid = takeIntegerOption(parsedArguments, '--run-as-uid');
+    const runAsGid = takeIntegerOption(parsedArguments, '--run-as-gid');
+    if ((runAsUid === undefined) !== (runAsGid === undefined)) {
+      throw new Error('`--run-as-uid` and `--run-as-gid` must be provided together.');
+    }
     const context: CliContext = { namespace };
     if (controlSocket) {
       context.controlSocket = controlSocket;
+    }
+    if (runAsUid !== undefined && runAsGid !== undefined) {
+      context.runAsUid = runAsUid;
+      context.runAsGid = runAsGid;
     }
     const result = await dispatch(
       parsedArguments,
