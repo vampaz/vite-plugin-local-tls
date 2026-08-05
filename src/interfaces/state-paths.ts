@@ -5,4 +5,8 @@ export interface StatePaths {
   lockPath: string;
   stateFile: string;
   certificateDirectory: string;
+  importedCertificateDirectory: string;
+  caKeyPath: string;
+  caCertificatePath: string;
+  caStatePath: string;
 }

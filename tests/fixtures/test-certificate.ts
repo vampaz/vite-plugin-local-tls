@@ -4,7 +4,10 @@ import path from 'node:path';
 
 export type TestCertificate = { key: Buffer; cert: Buffer };
 
-export async function createTestCertificate(directory: string): Promise<TestCertificate> {
+export async function createTestCertificate(
+  directory: string,
+  hostname = 'app.localhost',
+): Promise<TestCertificate> {
   const keyPath = path.join(directory, 'key.pem');
   const certificatePath = path.join(directory, 'certificate.pem');
   execFileSync(
@@ -20,9 +23,13 @@ export async function createTestCertificate(directory: string): Promise<TestCert
       '-out',
       certificatePath,
       '-subj',
-      '/CN=app.localhost',
+      `/CN=${hostname}`,
       '-addext',
-      'subjectAltName=DNS:app.localhost',
+      `subjectAltName=DNS:${hostname}`,
+      '-addext',
+      'basicConstraints=critical,CA:FALSE',
+      '-addext',
+      'extendedKeyUsage=serverAuth',
       '-days',
       '1',
     ],

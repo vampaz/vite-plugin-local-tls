@@ -328,51 +328,51 @@ Every source test remains adjacent to its source file. Cross-package contract an
     - Verification: `npm run test -- src/proxy-listeners.spec.ts`
     - Commit: `feat: bind loopback-only proxy listeners`
 
-- [ ] Phase 4: Generate, cache, trust, and remove local certificates
+- [x] Phase 4: Generate, cache, trust, and remove local certificates
 
-  - [ ] Step 4.1: Create secure state paths and diagnose system prerequisites
+  - [x] Step 4.1: Create secure state paths and diagnose system prerequisites
     - Objective: Select per-user state and runtime paths on macOS, Linux, WSL, and Windows; create private directories; enforce CA-key permissions; locate OpenSSL and trust tools; and emit actionable, platform-specific diagnostics.
     - Files: `src/state-paths.ts`, `src/state-paths.spec.ts`, `src/system-requirements.ts`, `src/system-requirements.spec.ts`
     - Test files: `src/state-paths.spec.ts`, `src/system-requirements.spec.ts`
     - Verification: `npm run test -- src/state-paths.spec.ts src/system-requirements.spec.ts`
     - Commit: `feat: validate local TLS system requirements`
 
-  - [ ] Step 4.2: Generate and validate the local CA with OpenSSL
+  - [x] Step 4.2: Generate and validate the local CA with OpenSSL
     - Objective: Generate an ECDSA CA with CA constraints, strong signatures, bounded validity, secure key permissions, atomic writes, fingerprint tracking, expiration checks, and safe regeneration rules. Never overwrite an installed CA merely because a leaf needs renewal.
     - Files: `src/certificates.ts`, `src/certificates.spec.ts`
     - Test file: `src/certificates.spec.ts`
     - Verification: `npm run test -- src/certificates.spec.ts`
     - Commit: `feat: create plugin local certificate authority`
 
-  - [ ] Step 4.3: Issue exact-host leaf certificates and select them with SNI
+  - [x] Step 4.3: Issue exact-host leaf certificates and select them with SNI
     - Objective: Generate certificates only for validated, registered hostnames; include the exact SAN; cache them by collision-resistant hostname key; deduplicate concurrent generation; renew before expiration; include the CA chain; and reject unknown SNI names rather than acting as an unrestricted signing oracle. Encode and test the `internalTls` true, false, and omitted policy for local, loopback, and custom domains exactly as frozen in phase 1.
     - Files: `src/certificates.ts`, `src/certificate-policy.ts`, `src/certificate-sni.spec.ts`, `src/certificate-policy.spec.ts`, `src/proxy-server.ts`
     - Test files: `src/certificate-sni.spec.ts`, `src/certificate-policy.spec.ts`
     - Verification: `npm run test -- src/certificate-sni.spec.ts src/certificate-policy.spec.ts`
     - Commit: `feat: serve exact-host TLS certificates`
 
-  - [ ] Step 4.4: Import and manage exact-host external certificates without npm dependencies
+  - [x] Step 4.4: Import and manage exact-host external certificates without npm dependencies
     - Objective: Implement the `internalTls: false` custom-domain path. Accept certificate, chain, and private-key files through the CLI; inspect them with OpenSSL and Node; require key/certificate and SAN matches; copy them atomically into private state; select them only for their exact registered hostnames; and remove only the requested imported material.
     - Files: `src/certificate-import.ts`, `src/certificate-import.spec.ts`, `src/certificates.ts`, `src/interfaces/certificate-record.ts`
     - Test file: `src/certificate-import.spec.ts`
     - Verification: `npm run test -- src/certificate-import.spec.ts`
     - Commit: `feat: manage imported exact-host certificates`
 
-  - [ ] Step 4.5: Install, verify, and remove CA trust on macOS
+  - [x] Step 4.5: Install, verify, and remove CA trust on macOS
     - Objective: Use argument-array child processes for `security`, target the intended keychain, verify the exact fingerprint rather than trusting marker files alone, handle authorization timeouts, and remove only this plugin's CA.
     - Files: `src/trust-store.ts`, `src/trust-store-macos.spec.ts`
     - Test file: `src/trust-store-macos.spec.ts`
     - Verification: `npm run test -- src/trust-store-macos.spec.ts`
     - Commit: `feat: manage macos CA trust`
 
-  - [ ] Step 4.6: Install, verify, and remove CA trust across supported Linux stores and WSL
+  - [x] Step 4.6: Install, verify, and remove CA trust across supported Linux stores and WSL
     - Objective: Detect Debian/Ubuntu, Fedora/RHEL/CentOS, Arch, and openSUSE trust mechanisms; use elevation only for the exact trust operation; refresh the store; support WSL's Windows browser store; and leave recoverable state when removal partially fails.
     - Files: `src/trust-store.ts`, `src/trust-store-linux.spec.ts`, `src/trust-store-wsl.spec.ts`
     - Test files: `src/trust-store-linux.spec.ts`, `src/trust-store-wsl.spec.ts`
     - Verification: `npm run test -- src/trust-store-linux.spec.ts src/trust-store-wsl.spec.ts`
     - Commit: `feat: manage linux and WSL CA trust`
 
-  - [ ] Step 4.7: Install, verify, and remove CA trust on Windows
+  - [x] Step 4.7: Install, verify, and remove CA trust on Windows
     - Objective: Use `certutil` with the current-user Root store by default, handle paths safely, verify the exact CA fingerprint, support cleanup retries, and avoid removing another certificate with a similar display name.
     - Files: `src/trust-store.ts`, `src/trust-store-windows.spec.ts`
     - Test file: `src/trust-store-windows.spec.ts`
