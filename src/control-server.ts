@@ -69,6 +69,7 @@ async function prepareSocketPath(socketPath: string): Promise<void> {
 export class ControlServer {
   readonly #options: ControlServerOptions;
   readonly #sockets = new Set<Socket>();
+  #queue = Promise.resolve();
   #server: Server | null = null;
 
   constructor(options: ControlServerOptions) {
@@ -159,15 +160,19 @@ export class ControlServer {
       if (!frame.trim()) {
         continue;
       }
-      state.queue = state.queue.then(async () => {
-        let requestId: string | undefined;
-        try {
-          const message = parseControlFrame(frame);
-          requestId = message.requestId;
-          await this.#processMessage(socket, state, message);
-        } catch (error) {
-          writeMessage(socket, createControlError(error, requestId));
-        }
+      state.queue = state.queue.then(() => {
+        const operation = this.#queue.then(async () => {
+          let requestId: string | undefined;
+          try {
+            const message = parseControlFrame(frame);
+            requestId = message.requestId;
+            await this.#processMessage(socket, state, message);
+          } catch (error) {
+            writeMessage(socket, createControlError(error, requestId));
+          }
+        });
+        this.#queue = operation;
+        return operation;
       });
     }
   }

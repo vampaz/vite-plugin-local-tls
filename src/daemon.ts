@@ -1,5 +1,4 @@
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import type { SecureContext } from 'node:tls';
 import { CertificateImportStore } from './certificate-import.js';
 import { resolveCertificatePolicy } from './certificate-policy.js';
 import { CertificateManager } from './certificates.js';
@@ -20,6 +19,7 @@ export class LocalTlsDaemon {
   readonly #options: DaemonOptions;
   readonly #importStore: CertificateImportStore;
   readonly #certificateManager: CertificateManager;
+  readonly #pendingHostnames = new Set<string>();
   #controlServer: ControlServer | null = null;
   #listeners: ProxyListenerSet | null = null;
   #state: ServiceState | null = null;
@@ -31,7 +31,9 @@ export class LocalTlsDaemon {
       paths: options.paths,
       opensslPath: options.opensslPath,
       isHostnameRegistered: (hostname) =>
-        hostname === BOOTSTRAP_HOSTNAME || this.registry.get(hostname) !== undefined,
+        hostname === BOOTSTRAP_HOSTNAME ||
+        this.registry.get(hostname) !== undefined ||
+        this.#pendingHostnames.has(hostname),
     });
   }
 
@@ -60,7 +62,6 @@ export class LocalTlsDaemon {
           createSecureProxyServer(proxy, {
             key: bootstrapKey,
             cert: bootstrapCertificate,
-            SNICallback: this.#selectCertificate.bind(this),
           }),
       });
       this.#controlServer = new ControlServer({
@@ -108,38 +109,41 @@ export class LocalTlsDaemon {
 
   async #validateRoutes(routes: RouteRegistration[]): Promise<void> {
     for (const route of routes) {
-      const imported = await this.#importStore.getCertificate(route.hostname);
-      try {
-        resolveCertificatePolicy(route.hostname, route.internalTls, imported !== null);
-      } catch (error) {
-        throw new ControlProtocolError(
-          'CERTIFICATE_REQUIRED',
-          error instanceof Error ? error.message : String(error),
-        );
+      this.#pendingHostnames.add(route.hostname);
+    }
+    try {
+      const prepared = await Promise.all(
+        routes.map(async (route) => {
+          const imported = await this.#importStore.getCertificate(route.hostname);
+          let policy: ReturnType<typeof resolveCertificatePolicy>;
+          try {
+            policy = resolveCertificatePolicy(route.hostname, route.internalTls, imported !== null);
+          } catch (error) {
+            throw new ControlProtocolError(
+              'CERTIFICATE_REQUIRED',
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+          return {
+            hostname: route.hostname,
+            context:
+              policy === 'imported'
+                ? await this.#importStore.readSecureContextOptions(route.hostname)
+                : await this.#certificateManager.readSecureContextOptions(route.hostname),
+          };
+        }),
+      );
+      if (!this.#listeners?.ipv4.addContext || !this.#listeners.ipv6.addContext) {
+        throw new Error('TLS listeners are unavailable during route validation.');
+      }
+      for (const { hostname, context } of prepared) {
+        this.#listeners.ipv4.addContext(hostname, context);
+        this.#listeners.ipv6.addContext(hostname, context);
+      }
+    } finally {
+      for (const route of routes) {
+        this.#pendingHostnames.delete(route.hostname);
       }
     }
-  }
-
-  #selectCertificate(
-    hostname: string,
-    callback: (error: Error | null, context?: SecureContext) => void,
-  ): void {
-    const route = this.registry.get(hostname);
-    if (!route) {
-      callback(new Error(`No active route owns SNI hostname ${hostname}.`));
-      return;
-    }
-    this.#resolveSecureContext(route).then(
-      (context) => callback(null, context),
-      (error: unknown) => callback(error instanceof Error ? error : new Error(String(error))),
-    );
-  }
-
-  async #resolveSecureContext(route: RouteRegistration): Promise<SecureContext> {
-    const imported = await this.#importStore.getCertificate(route.hostname);
-    const policy = resolveCertificatePolicy(route.hostname, route.internalTls, imported !== null);
-    return policy === 'imported'
-      ? this.#importStore.createSecureContext(route.hostname)
-      : this.#certificateManager.createSecureContext(route.hostname);
   }
 }

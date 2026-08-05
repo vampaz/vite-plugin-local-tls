@@ -14,7 +14,14 @@ import {
   type SecureServerOptions,
 } from 'node:http2';
 import type { Duplex } from 'node:stream';
-import { createServer as createTlsServer } from 'node:tls';
+import {
+  createSecureContext,
+  createServer as createTlsServer,
+  type SecureContext,
+  type TLSSocket,
+} from 'node:tls';
+import type { CertificateContextOptions } from './interfaces/certificate-context-options.js';
+import type { ProxyListenerServer } from './interfaces/proxy-listeners.js';
 import type { ProxyOptions } from './interfaces/proxy-options.js';
 import type { ActiveRoute } from './route-registry.js';
 
@@ -218,6 +225,10 @@ export class ProxyServer {
       publicPort: options.publicPort ?? 443,
       proxyMarker: options.proxyMarker ?? 'x-vite-local-tls-proxy',
     };
+  }
+
+  hasRoute(hostname: string): boolean {
+    return this.#options.registry.get(hostname) !== undefined;
   }
 
   handleRequest(request: IncomingMessage, response: ServerResponse): void {
@@ -458,12 +469,37 @@ export class ProxyServer {
 export function createSecureProxyServer(
   proxy: ProxyServer,
   options: SecureServerOptions,
-): ReturnType<typeof createTlsServer> {
+): ProxyListenerServer {
   const http1Server = createHttpServer(proxy.handleRequest.bind(proxy));
   http1Server.on('upgrade', proxy.handleUpgrade.bind(proxy));
+  if (!Buffer.isBuffer(options.key) || !Buffer.isBuffer(options.cert)) {
+    throw new Error('The secure proxy server requires a buffered TLS key and certificate.');
+  }
+  const defaultContext = createSecureContext({ key: options.key, cert: options.cert });
+  const contexts = new Map<string, SecureContext>();
+
+  function selectContext(hostname: string | false | undefined): SecureContext {
+    const normalizedHostname = typeof hostname === 'string' ? hostname.toLowerCase() : undefined;
+    return normalizedHostname && proxy.hasRoute(normalizedHostname)
+      ? (contexts.get(normalizedHostname) ?? defaultContext)
+      : defaultContext;
+  }
+
   const server = createTlsServer({
-    ...options,
-    ALPNProtocols: ['h2', 'http/1.1'],
+    ALPNCallback: function selectProtocol({ servername, protocols }): string | undefined {
+      (this as unknown as TLSSocket).setKeyCert(selectContext(servername));
+      if (protocols.includes('h2')) {
+        return 'h2';
+      }
+      if (protocols.includes('http/1.1')) {
+        return 'http/1.1';
+      }
+      return undefined;
+    },
+    SNICallback: function selectCertificate(hostname, callback): void {
+      (this as unknown as TLSSocket).setKeyCert(selectContext(hostname));
+      callback(null, undefined);
+    },
   });
   server.on('secureConnection', (socket) => {
     if (socket.alpnProtocol === 'h2') {
@@ -475,5 +511,11 @@ export function createSecureProxyServer(
     }
     http1Server.emit('connection', socket);
   });
+  server.addContext = function addContext(
+    hostname: string,
+    context: CertificateContextOptions,
+  ): void {
+    contexts.set(hostname.toLowerCase(), createSecureContext(context));
+  };
   return server;
 }

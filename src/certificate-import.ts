@@ -7,6 +7,7 @@ import type {
   CertificateImportOptions,
   CertificateImportStoreOptions,
 } from './interfaces/certificate-import-options.js';
+import type { CertificateContextOptions } from './interfaces/certificate-context-options.js';
 import type { CertificateRecord } from './interfaces/certificate-record.js';
 import { ensureStatePaths } from './state-paths.js';
 
@@ -156,12 +157,16 @@ export class CertificateImportStore {
   }
 
   async createSecureContext(hostname: string): Promise<SecureContext> {
+    return createSecureContext(await this.readSecureContextOptions(hostname));
+  }
+
+  async readSecureContextOptions(hostname: string): Promise<CertificateContextOptions> {
     const record = await this.getCertificate(hostname);
     if (!record) {
       throw new Error(`No valid imported certificate exists for ${hostname}.`);
     }
     const [key, chain] = await Promise.all([readFile(record.keyPath), readFile(record.chainPath)]);
-    return createSecureContext({ key, cert: chain });
+    return { key, cert: chain };
   }
 
   #validateCertificate(

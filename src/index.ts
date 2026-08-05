@@ -6,6 +6,6 @@ export type {
   LocalTlsPluginOptions,
   LoopbackDomain,
 } from './interfaces/plugin-options.js';
-export { viteLocalTlsPlugin } from './plugin.js';
+export { createViteLocalTlsPlugin, viteLocalTlsPlugin } from './plugin.js';
 
 export { viteLocalTlsPlugin as default } from './plugin.js';

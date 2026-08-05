@@ -460,58 +460,58 @@ Every source test remains adjacent to its source file. Cross-package contract an
     - Verification: `npm run test -- src/plugin-reconnect.spec.ts`
     - Commit: `feat: recover routes after daemon restart`
 
-- [ ] Phase 7: Prove full parity with real servers, checkouts, and worktrees
+- [x] Phase 7: Prove full parity with real servers, checkouts, and worktrees
 
-  - [ ] Step 7.1: Create a real Vite playground and trusted-TLS smoke path
+  - [x] Step 7.1: Create a real Vite playground and trusted-TLS smoke path
     - Objective: Add a minimal app that reports its checkout, branch, URL, protocol, and HMR state. Run the built plugin as an installed package, not through source-only shortcuts.
     - Files: `playground/package.json`, `playground/vite.config.ts`, `playground/index.html`, `playground/src/main.ts`, `tests/e2e/playwright.config.ts`, `tests/e2e/smoke.spec.ts`
     - Test file: `tests/e2e/smoke.spec.ts`
     - Verification: `npm run test:e2e -- tests/e2e/smoke.spec.ts`
     - Commit: `test: add local TLS playground smoke coverage`
 
-  - [ ] Step 7.2: Run simultaneous servers from regular clones and linked worktrees
+  - [x] Step 7.2: Run simultaneous servers from regular clones and linked worktrees
     - Objective: Create temporary Git repositories, independent clones, and linked worktrees on distinct branches; start every server concurrently; verify unique branch-based URLs, distinct page markers, distinct storage origins, and isolated HMR connections.
     - Files: `tests/e2e/checkout-isolation.spec.ts`, `tests/fixtures/create-checkouts.ts`, `tests/fixtures/server-process.ts`
     - Test file: `tests/e2e/checkout-isolation.spec.ts`
     - Verification: `npm run test:e2e -- tests/e2e/checkout-isolation.spec.ts`
     - Commit: `test: prove checkout and worktree isolation`
 
-  - [ ] Step 7.3: Prove same-branch disambiguation with `instanceLabel`
+  - [x] Step 7.3: Prove same-branch disambiguation with `instanceLabel`
     - Objective: Run two independent copies of the same branch with different labels and verify both remain reachable. Also prove that omitting labels retains deterministic latest-started takeover rather than inventing an unstable URL.
     - Files: `tests/e2e/instance-label.spec.ts`
     - Test file: `tests/e2e/instance-label.spec.ts`
     - Verification: `npm run test:e2e -- tests/e2e/instance-label.spec.ts`
     - Commit: `test: cover same-branch checkout labels`
 
-  - [ ] Step 7.4: Port the complete takeover, sibling, crash, and concurrent-start E2E suite
+  - [x] Step 7.4: Port the complete takeover, sibling, crash, and concurrent-start E2E suite
     - Objective: Recreate every current isolation scenario: reused live hostname, four simultaneous distinct hostnames, partial multi-domain takeover, SIGINT restart, SIGTERM cleanup, SIGKILL recovery, stale daemon state, and concurrent startup.
     - Files: `tests/e2e/route-ownership.spec.ts`, `tests/fixtures/server-process.ts`
     - Test file: `tests/e2e/route-ownership.spec.ts`
     - Verification: `npm run test:e2e -- tests/e2e/route-ownership.spec.ts`
     - Commit: `test: port route ownership end-to-end coverage`
 
-  - [ ] Step 7.5: Prove every domain mode and proxy option end to end
+  - [x] Step 7.5: Prove every domain mode and proxy option end to end
     - Objective: Exercise default domains, explicit single and multiple domains, normalization and invalid-domain diagnostics, custom base domains, long hashed labels, all loopback-domain modes, repo/branch overrides, CORS, every `internalTls` certificate-policy mode, imported custom certificates, upstream Host rewriting, resolved local URLs, wildcard binds, IPv4-only upstreams, and IPv6-only upstreams.
     - Files: `tests/e2e/domain-matrix.spec.ts`, `tests/e2e/proxy-options.spec.ts`
     - Test files: `tests/e2e/domain-matrix.spec.ts`, `tests/e2e/proxy-options.spec.ts`
     - Verification: `npm run test:e2e -- tests/e2e/domain-matrix.spec.ts tests/e2e/proxy-options.spec.ts`
     - Commit: `test: prove domain and proxy option parity`
 
-  - [ ] Step 7.6: Prove HMR, application WebSockets, preview, and auto-port behavior
+  - [x] Step 7.6: Prove HMR, application WebSockets, preview, and auto-port behavior
     - Objective: Verify WSS HMR updates only the intended checkout, proxy an application WebSocket, run preview over HTTPS, and occupy the requested Vite port so registration must use the auto-incremented port.
     - Files: `tests/e2e/hmr.spec.ts`, `tests/e2e/websocket.spec.ts`, `tests/e2e/preview.spec.ts`, `tests/e2e/auto-port.spec.ts`
     - Test files: `tests/e2e/hmr.spec.ts`, `tests/e2e/websocket.spec.ts`, `tests/e2e/preview.spec.ts`, `tests/e2e/auto-port.spec.ts`
     - Verification: `npm run test:e2e -- tests/e2e/hmr.spec.ts tests/e2e/websocket.spec.ts tests/e2e/preview.spec.ts tests/e2e/auto-port.spec.ts`
     - Commit: `test: prove realtime and preview parity`
 
-  - [ ] Step 7.7: Run the supported Vite-version matrix
+  - [x] Step 7.7: Run the supported Vite-version matrix
     - Objective: Execute the contract and focused browser suite against the latest releases in every declared Vite major. Use isolated fixture installs, never `npx`, and update the peer range if a major cannot be supported honestly.
     - Files: `tests/e2e/run-vite-matrix.sh`, `tests/fixtures/vite-versions/`, `package.json`
     - Test file: `tests/contract/vite-version-contract.spec.ts`
     - Verification: `npm run test:e2e:matrix`
     - Commit: `test: verify supported Vite majors`
 
-  - [ ] Step 7.8: Prove the package has no runtime npm or Caddy dependency
+  - [x] Step 7.8: Prove the package has no runtime npm or Caddy dependency
     - Objective: Inspect the packed artifact and its manifest, install it into a clean fixture, run with no Caddy/Portless/mkcert binaries available, and prove the source never invokes or imports those tools. Keep OpenSSL and OS trust requirements explicit.
     - Files: `scripts/verify-zero-runtime-dependencies.mjs`, `tests/contract/zero-dependencies.spec.ts`, `package.json`
     - Test file: `tests/contract/zero-dependencies.spec.ts`

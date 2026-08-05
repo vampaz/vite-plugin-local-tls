@@ -10,6 +10,7 @@ import { chmod, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/p
 import path from 'node:path';
 import { createSecureContext, type SecureContext } from 'node:tls';
 import { validateHostname } from './control-protocol.js';
+import type { CertificateContextOptions } from './interfaces/certificate-context-options.js';
 import type { CertificateManagerOptions } from './interfaces/certificate-manager-options.js';
 import type {
   CertificateAuthorityRecord,
@@ -83,12 +84,16 @@ export class CertificateManager {
   }
 
   async createSecureContext(hostname: string): Promise<SecureContext> {
+    return createSecureContext(await this.readSecureContextOptions(hostname));
+  }
+
+  async readSecureContextOptions(hostname: string): Promise<CertificateContextOptions> {
     const record = await this.ensureLeafCertificate(hostname);
     const [key, certificate] = await Promise.all([
       readFile(record.keyPath),
       readFile(record.chainPath),
     ]);
-    return createSecureContext({ key, cert: certificate });
+    return { key, cert: certificate };
   }
 
   async #ensureCertificateAuthority(): Promise<CertificateAuthorityRecord> {
@@ -305,7 +310,7 @@ export class CertificateManager {
         '-out',
         requestPath,
         '-subj',
-        `/CN=${hostname}`,
+        '/CN=Vite Local TLS',
         '-addext',
         `subjectAltName=DNS:${hostname}`,
       ]);

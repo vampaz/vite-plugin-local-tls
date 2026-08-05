@@ -113,6 +113,7 @@ describe('HTTP/2 proxy', () => {
         {
           headers: { Host: 'app.localhost' },
           rejectUnauthorized: false,
+          servername: 'app.localhost',
         },
         (response) => {
           const chunks: Buffer[] = [];

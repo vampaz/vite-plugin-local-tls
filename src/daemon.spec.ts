@@ -1,9 +1,13 @@
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { X509Certificate } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { get } from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
+import { connect } from 'node:tls';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createTestCertificate } from '../tests/fixtures/test-certificate.js';
+import { CertificateImportStore } from './certificate-import.js';
 import { ControlClient } from './control-client.js';
 import { LocalTlsDaemon } from './daemon.js';
 import { getStatePaths } from './state-paths.js';
@@ -110,6 +114,57 @@ describe('LocalTlsDaemon', () => {
       ]),
     ).rejects.toThrow(/cert import/);
     expect(daemon.registry.size).toBe(0);
+  });
+
+  it('serves the exact imported certificate for a custom hostname', async () => {
+    const hostname = 'app.example.test';
+    const paths = getStatePaths(namespace, process.platform, { HOME: temporaryDirectory });
+    const certificate = await createTestCertificate(temporaryDirectory, hostname);
+    await new CertificateImportStore({ paths }).importCertificate({
+      hostname,
+      certificatePath: path.join(temporaryDirectory, 'certificate.pem'),
+      keyPath: path.join(temporaryDirectory, 'key.pem'),
+    });
+    daemon = new LocalTlsDaemon({ paths, opensslPath: 'openssl', port: 0, namespace });
+    const state = await daemon.start();
+    client = new ControlClient({ socketPath: paths.socketPath });
+    await client.connect();
+    await client.register([
+      {
+        hostname,
+        upstreamHost: '127.0.0.1',
+        upstreamPort: 5173,
+        internalTls: false,
+      },
+    ]);
+
+    const served = await new Promise<X509Certificate>((resolve, reject) => {
+      const socket = connect(
+        {
+          host: '127.0.0.1',
+          port: state.port,
+          rejectUnauthorized: false,
+          servername: hostname,
+        },
+        () => {
+          const peer = socket.getPeerCertificate(true);
+          socket.destroy();
+          resolve(new X509Certificate(peer.raw));
+        },
+      );
+      socket.once('error', reject);
+    });
+
+    const expected = new X509Certificate(certificate.cert);
+    expect({
+      fingerprint: served.fingerprint256,
+      subject: served.subject,
+      subjectAltName: served.subjectAltName,
+    }).toEqual({
+      fingerprint: expected.fingerprint256,
+      subject: expected.subject,
+      subjectAltName: expected.subjectAltName,
+    });
   });
 
   it('rolls back TLS listeners when the control path is unsafe', async () => {
