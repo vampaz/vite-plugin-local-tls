@@ -1,0 +1,507 @@
+import { fileURLToPath } from 'node:url';
+import type { AddressInfo } from 'node:net';
+import type { Plugin, PluginOption, PreviewServer, UserConfig, ViteDevServer } from 'vite';
+import { CertificateManager } from './certificates.js';
+import { ControlClient, type OwnedRouteInput } from './control-client.js';
+import {
+  normalizeBaseDomain,
+  normalizeDomains,
+  resolveLocalTlsDomains,
+  sanitizeDomainLabel,
+} from './domain-resolution.js';
+import { getGitRepoInfo } from './checkout-resolution.js';
+import type { LocalTlsPluginOptions } from './interfaces/plugin-options.js';
+import type {
+  PluginControlClient,
+  PluginRuntimeDependencies,
+} from './interfaces/plugin-runtime.js';
+import type { StatePaths } from './interfaces/state-paths.js';
+import { LocalTlsService } from './service.js';
+import { installStartupService } from './service-install.js';
+import { getStatePaths } from './state-paths.js';
+import { assertTlsSystemRequirements, inspectSystemRequirements } from './system-requirements.js';
+import { TrustStore } from './trust-store.js';
+
+type SupportedViteServer = ViteDevServer | PreviewServer;
+export const PLUGIN_HEARTBEAT_INTERVAL_MS = 10_000;
+
+function createConfig(
+  userConfig: UserConfig,
+  options: LocalTlsPluginOptions,
+): Pick<UserConfig, 'server' | 'preview'> {
+  const defaultHmrDomain = resolveLocalTlsDomains(options)?.[0];
+  const hmr =
+    userConfig.server?.hmr === undefined && defaultHmrDomain
+      ? {
+          protocol: 'wss' as const,
+          host: defaultHmrDomain,
+          clientPort: 443,
+        }
+      : userConfig.server?.hmr;
+  return {
+    server: {
+      host: userConfig.server?.host === undefined ? true : userConfig.server.host,
+      allowedHosts:
+        userConfig.server?.allowedHosts === undefined ? true : userConfig.server.allowedHosts,
+      ...(hmr !== undefined ? { hmr } : {}),
+    },
+    preview: {
+      host: userConfig.preview?.host === undefined ? true : userConfig.preview.host,
+      allowedHosts:
+        userConfig.preview?.allowedHosts === undefined ? true : userConfig.preview.allowedHosts,
+    },
+  };
+}
+
+function createDefaultDependencies(): PluginRuntimeDependencies {
+  return {
+    platform: process.platform,
+    logger: {
+      info(message): void {
+        console.log(message);
+      },
+      warn(message): void {
+        console.warn(message);
+      },
+      error(message, error): void {
+        if (error === undefined) {
+          console.error(message);
+        } else {
+          console.error(message, error);
+        }
+      },
+    },
+    createControlClient(options): PluginControlClient {
+      return new ControlClient(options);
+    },
+    async ensureInfrastructure(
+      request,
+    ): Promise<Awaited<ReturnType<LocalTlsService['autoStart']>>> {
+      const requirements = inspectSystemRequirements();
+      assertTlsSystemRequirements(requirements);
+      const opensslPath = requirements.opensslPath!;
+      const manager = new CertificateManager({ paths: request.paths, opensslPath });
+      const authority = await manager.ensureCertificateAuthority();
+      const trustStore = new TrustStore({ requirements, authority });
+      const service = new LocalTlsService({
+        paths: request.paths,
+        opensslPath,
+        namespace: request.namespace,
+        port: 443,
+      });
+      return service.autoStart({
+        async isTrusted(): Promise<boolean> {
+          return (await trustStore.verify()).trusted;
+        },
+        async trust(): Promise<void> {
+          await trustStore.install();
+        },
+        async installService(): Promise<void> {
+          await installStartupService({
+            namespace: request.namespace,
+            paths: request.paths,
+            nodePath: process.execPath,
+            cliPath: fileURLToPath(new URL('./cli.js', import.meta.url)),
+            controlSocket: request.controlSocket,
+          });
+        },
+      });
+    },
+  };
+}
+
+function resolveCompatibilityOptions(
+  options: LocalTlsPluginOptions,
+  dependencies: PluginRuntimeDependencies,
+): LocalTlsPluginOptions {
+  if (options.caddyApiUrl !== undefined) {
+    dependencies.logger.warn(
+      '`caddyApiUrl` is deprecated and ignored because the local TLS service has no HTTP Admin API. Use `controlSocket` when a custom control channel is required.',
+    );
+  }
+  if (options.caddyAdminOrigin !== undefined) {
+    dependencies.logger.warn(
+      '`caddyAdminOrigin` is deprecated and ignored because the local TLS service has no HTTP Admin API.',
+    );
+  }
+  return {
+    ...options,
+    serviceNamespace: options.serviceNamespace ?? options.serverName,
+  };
+}
+
+function buildDomainResolutionMessage(options: LocalTlsPluginOptions): string {
+  const issues: string[] = [];
+  if (options.domain !== undefined && !normalizeDomains(options.domain)) {
+    issues.push('`domain` is empty after trimming');
+  }
+  if (options.baseDomain !== undefined && !normalizeBaseDomain(options.baseDomain)) {
+    issues.push('`baseDomain` is empty after trimming');
+  }
+  if (options.instanceLabel !== undefined && !sanitizeDomainLabel(options.instanceLabel)) {
+    issues.push('`instanceLabel` is empty after sanitization');
+  }
+  const checkout = getGitRepoInfo();
+  if (!(options.repo ?? checkout.repo)) {
+    issues.push('repo name not found (not a git repo?)');
+  }
+  if (!(options.branch ?? checkout.branch)) {
+    issues.push('branch name not found (detached HEAD?)');
+  }
+  return issues.length === 0
+    ? 'No domain resolved. Provide `domain`, or `repo` and `branch`, or ensure git metadata is available.'
+    : `No domain resolved. Issues: ${issues.join('; ')}. Provide \`domain\`, or \`repo\` and \`branch\`, or ensure git metadata is available.`;
+}
+
+function resolvePaths(options: LocalTlsPluginOptions): StatePaths {
+  const paths = getStatePaths(options.serviceNamespace ?? 'default');
+  return options.controlSocket ? { ...paths, socketPath: options.controlSocket } : paths;
+}
+
+function loopbackHost(host: string): string {
+  if (host === '0.0.0.0') {
+    return '127.0.0.1';
+  }
+  if (host === '::' || host === '[::]') {
+    return '::1';
+  }
+  return host === 'localhost' ? '127.0.0.1' : host;
+}
+
+function configuredHost(host: string | boolean | undefined): string {
+  if (typeof host === 'string' && host.trim()) {
+    return loopbackHost(host.trim());
+  }
+  return '127.0.0.1';
+}
+
+function formatTarget(host: string, port: number): string {
+  return host.includes(':') && !host.startsWith('[') ? `[${host}]:${port}` : `${host}:${port}`;
+}
+
+function resolveUpstream(
+  server: SupportedViteServer,
+  preview: boolean,
+): {
+  host: string;
+  port: number;
+} {
+  const resolvedUrl = server.resolvedUrls?.local?.[0];
+  if (resolvedUrl) {
+    try {
+      const url = new URL(resolvedUrl);
+      const port = Number(url.port);
+      if (url.hostname && Number.isInteger(port) && port > 0) {
+        return { host: loopbackHost(url.hostname), port };
+      }
+    } catch {}
+  }
+  const address = server.httpServer?.address();
+  const configured = preview ? server.config.preview : server.config.server;
+  const fallbackPort = preview
+    ? (server.config.preview.port ?? 4173)
+    : (server.config.server.port ?? 5173);
+  if (address && typeof address !== 'string') {
+    return {
+      host: loopbackHost((address as AddressInfo).address || configuredHost(configured.host)),
+      port: address.port,
+    };
+  }
+  return { host: configuredHost(configured.host), port: fallbackPort };
+}
+
+function hasListen(server: SupportedViteServer): server is SupportedViteServer & {
+  listen: (port?: number, isRestart?: boolean) => Promise<unknown>;
+} {
+  return 'listen' in server && typeof server.listen === 'function';
+}
+
+function createPlugin(
+  options: LocalTlsPluginOptions,
+  dependencies: PluginRuntimeDependencies,
+): Plugin {
+  const domains = resolveLocalTlsDomains(options) ?? [];
+
+  function setupServer(server: SupportedViteServer, preview: boolean): void {
+    if (domains.length === 0) {
+      dependencies.logger.error(buildDomainResolutionMessage(options));
+      return;
+    }
+    let started = false;
+    let client: PluginControlClient | null = null;
+    let cleanupPromise: Promise<void> | null = null;
+    let heartbeat: NodeJS.Timeout | null = null;
+    let recoveryPromise: Promise<void> | null = null;
+    let shuttingDown = false;
+    let ownerToken: string | undefined;
+    let routeInputs: OwnedRouteInput[] = [];
+    const ownedHostnames = new Set(domains);
+    const namespace = options.serviceNamespace ?? 'default';
+    const paths = resolvePaths(options);
+
+    function delay(milliseconds: number): Promise<void> {
+      return new Promise((resolve) => setTimeout(resolve, milliseconds));
+    }
+
+    async function closeWithRetry(activeClient: PluginControlClient): Promise<void> {
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          await activeClient.close();
+          return;
+        } catch (error) {
+          lastError = error;
+          if (attempt < 2) {
+            await delay(100 * 2 ** attempt);
+          }
+        }
+      }
+      dependencies.logger.error(
+        `Failed to release local TLS routes for ${domains.join(', ')} after 3 attempts.`,
+        lastError,
+      );
+    }
+
+    async function cleanup(): Promise<void> {
+      if (cleanupPromise) {
+        return cleanupPromise;
+      }
+      cleanupPromise = (async () => {
+        shuttingDown = true;
+        if (heartbeat) {
+          clearInterval(heartbeat);
+          heartbeat = null;
+        }
+        process.off('SIGINT', onSigint);
+        process.off('SIGTERM', onSigterm);
+        const activeClient = client;
+        if (activeClient) {
+          await closeWithRetry(activeClient);
+        }
+        client = null;
+      })();
+      return cleanupPromise;
+    }
+
+    function signalExitCode(signal: NodeJS.Signals): number {
+      return signal === 'SIGINT' ? 130 : 143;
+    }
+
+    function handleSignal(signal: NodeJS.Signals): void {
+      process.off('SIGINT', onSigint);
+      process.off('SIGTERM', onSigterm);
+      void cleanup().finally(() => process.exit(signalExitCode(signal)));
+    }
+
+    function onSigint(): void {
+      handleSignal('SIGINT');
+    }
+
+    function onSigterm(): void {
+      handleSignal('SIGTERM');
+    }
+
+    function startHeartbeat(): void {
+      heartbeat = setInterval(() => {
+        const activeClient = client;
+        if (!activeClient) {
+          return;
+        }
+        const requestedHostnames = activeClient.claimedHostnames;
+        if (requestedHostnames.length === 0) {
+          return;
+        }
+        void activeClient
+          .heartbeat(requestedHostnames)
+          .then((activeHostnames) => {
+            const active = new Set(activeHostnames);
+            const lost = requestedHostnames.filter((hostname) => !active.has(hostname));
+            if (lost.length > 0) {
+              for (const hostname of lost) {
+                ownedHostnames.delete(hostname);
+              }
+              dependencies.logger.error(
+                `Lost local TLS route ownership for ${lost.join(', ')}; the Vite server is still running.`,
+              );
+            }
+          })
+          .catch((error: unknown) => {
+            dependencies.logger.error(
+              `Failed to refresh local TLS route ownership for ${requestedHostnames.join(', ')}.`,
+              error,
+            );
+          });
+      }, PLUGIN_HEARTBEAT_INTERVAL_MS);
+      heartbeat.unref?.();
+    }
+
+    function createControlClient(): PluginControlClient {
+      return dependencies.createControlClient({
+        socketPath: paths.socketPath,
+        ownerToken,
+        onRouteLost(takeover): void {
+          ownedHostnames.delete(takeover.hostname);
+          dependencies.logger.error(
+            `Lost local TLS route ownership for ${takeover.hostname}; a newer Vite server now owns that hostname.`,
+          );
+        },
+        onDisconnect(error): void {
+          if (!shuttingDown) {
+            void recoverRoutes(error);
+          }
+        },
+      });
+    }
+
+    async function recoverRoutes(disconnectError?: Error): Promise<void> {
+      if (recoveryPromise || shuttingDown) {
+        return recoveryPromise ?? Promise.resolve();
+      }
+      recoveryPromise = (async () => {
+        if (heartbeat) {
+          clearInterval(heartbeat);
+          heartbeat = null;
+        }
+        let lastError: unknown = disconnectError;
+        for (let attempt = 0; attempt < 3 && !shuttingDown; attempt += 1) {
+          let candidate: PluginControlClient | null = null;
+          try {
+            await dependencies.ensureInfrastructure({
+              namespace,
+              paths,
+              controlSocket: options.controlSocket,
+            });
+            const activeRoutes = routeInputs.filter(({ hostname }) => ownedHostnames.has(hostname));
+            if (activeRoutes.length === 0) {
+              return;
+            }
+            candidate = createControlClient();
+            await candidate.connect();
+            await candidate.register(activeRoutes);
+            if (shuttingDown) {
+              await candidate.close();
+              return;
+            }
+            client = candidate;
+            dependencies.logger.info(
+              `Recovered local TLS routes for ${activeRoutes.map(({ hostname }) => hostname).join(', ')}.`,
+            );
+            startHeartbeat();
+            return;
+          } catch (error) {
+            lastError = error;
+            await candidate?.close().catch(() => undefined);
+            if (attempt < 2 && !shuttingDown) {
+              await delay(100 * 2 ** attempt);
+            }
+          }
+        }
+        if (!shuttingDown) {
+          dependencies.logger.error(
+            `Local TLS route recovery failed for ${[...ownedHostnames].join(', ')}; HTTPS and HMR over WSS are unavailable while the Vite server remains running.`,
+            lastError,
+          );
+        }
+      })().finally(() => {
+        recoveryPromise = null;
+      });
+      return recoveryPromise;
+    }
+
+    async function setup(): Promise<void> {
+      if (started) {
+        return;
+      }
+      started = true;
+      const upstream = resolveUpstream(server, preview);
+      routeInputs = domains.map((hostname) => ({
+        hostname,
+        upstreamHost: upstream.host,
+        upstreamPort: upstream.port,
+        ...(options.cors !== undefined ? { cors: options.cors } : {}),
+        ...(options.internalTls !== undefined ? { internalTls: options.internalTls } : {}),
+        ...(options.upstreamHostHeader !== undefined
+          ? { upstreamHostHeader: options.upstreamHostHeader }
+          : {}),
+      }));
+      try {
+        await dependencies.ensureInfrastructure({
+          namespace,
+          paths,
+          controlSocket: options.controlSocket,
+        });
+        const controlClient = createControlClient();
+        ownerToken = controlClient.ownerToken;
+        client = controlClient;
+        await controlClient.connect();
+        await controlClient.register(routeInputs);
+      } catch (error) {
+        await cleanup().catch(() => undefined);
+        dependencies.logger.error(
+          `Failed to register local TLS routes for ${domains.join(', ')}.`,
+          error,
+        );
+        return;
+      }
+      dependencies.logger.info(
+        `Local TLS upstream: http://${formatTarget(upstream.host, upstream.port)}`,
+      );
+      for (const hostname of domains) {
+        dependencies.logger.info(`Local TLS URL: https://${hostname}`);
+      }
+      if (dependencies.platform === 'linux' && !options.loopbackDomain) {
+        dependencies.logger.info(
+          'Linux hostname guidance: use a .localhost domain or map the hostname to 127.0.0.1.',
+        );
+      }
+      startHeartbeat();
+      process.once('SIGINT', onSigint);
+      process.once('SIGTERM', onSigterm);
+      server.httpServer?.once('close', () => void cleanup());
+    }
+
+    function startSetup(): void {
+      void setup();
+    }
+
+    if (server.httpServer?.listening) {
+      startSetup();
+      return;
+    }
+    if (server.httpServer) {
+      server.httpServer.once('listening', startSetup);
+    }
+    if (hasListen(server)) {
+      const originalListen = server.listen.bind(server);
+      server.listen = async function listen(port?: number, isRestart?: boolean): Promise<unknown> {
+        const result = await originalListen(port, isRestart);
+        await setup();
+        return result;
+      };
+    }
+  }
+
+  return {
+    name: '@vampaz/vite-plugin-local-tls',
+    config(userConfig): Pick<UserConfig, 'server' | 'preview'> {
+      return createConfig(userConfig, options);
+    },
+    configureServer(server): void {
+      setupServer(server, false);
+    },
+    configurePreviewServer(server): void {
+      setupServer(server, true);
+    },
+  };
+}
+
+export function createViteLocalTlsPlugin(
+  options: LocalTlsPluginOptions = {},
+  dependencies: PluginRuntimeDependencies = createDefaultDependencies(),
+): Plugin {
+  return createPlugin(resolveCompatibilityOptions(options, dependencies), dependencies);
+}
+
+export function viteLocalTlsPlugin(options: LocalTlsPluginOptions = {}): PluginOption {
+  return createViteLocalTlsPlugin(options);
+}

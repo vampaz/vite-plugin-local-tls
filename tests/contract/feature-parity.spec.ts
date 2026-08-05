@@ -30,9 +30,7 @@ describe('legacy feature contract', () => {
       'serverName',
       'caddyAdminOrigin',
     ]);
-    expect(legacyOptionContract.filter(({ outcome }) => outcome === 'removed')).toEqual([
-      { name: 'caddyAdminOrigin', outcome: 'removed', replacement: null },
-    ]);
+    expect(legacyOptionContract.map(({ outcome }) => outcome)).not.toContain('removed');
   });
 
   it('freezes all internal TLS input and hostname combinations', () => {

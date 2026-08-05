@@ -43,9 +43,9 @@ export const legacyOptionContract = [
   { name: 'cors', outcome: 'preserved' },
   { name: 'internalTls', outcome: 'preserved' },
   { name: 'upstreamHostHeader', outcome: 'preserved' },
-  { name: 'caddyApiUrl', outcome: 'replaced', replacement: 'controlSocket' },
-  { name: 'serverName', outcome: 'replaced', replacement: 'serviceNamespace' },
-  { name: 'caddyAdminOrigin', outcome: 'removed', replacement: null },
+  { name: 'caddyApiUrl', outcome: 'deprecated', replacement: 'controlSocket' },
+  { name: 'serverName', outcome: 'deprecated', replacement: 'serviceNamespace' },
+  { name: 'caddyAdminOrigin', outcome: 'deprecated', replacement: null },
 ] as const;
 
 export const internalTlsCompatibilityCases = [

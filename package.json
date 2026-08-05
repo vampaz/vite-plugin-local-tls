@@ -1,5 +1,5 @@
 {
-  "name": "vite-plugin-local-tls",
+  "name": "@vampaz/vite-plugin-local-tls",
   "version": "0.0.1",
   "description": "Zero-dependency local HTTPS routing for concurrent Vite checkouts.",
   "keywords": [
@@ -20,8 +20,16 @@
     "type": "git",
     "url": "git+https://github.com/vampaz/vite-plugin-local-tls.git"
   },
+  "bin": {
+    "vite-local-tls": "./dist/cli.js"
+  },
   "files": [
-    "dist"
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "dist",
+    "MIGRATION.md",
+    "RELEASING.md",
+    "SECURITY.md"
   ],
   "type": "module",
   "module": "./dist/index.js",
@@ -30,29 +38,57 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
     }
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && tsc -p tsconfig.build.json",
+    "changeset": "changeset",
+    "changeset:version": "changeset version",
+    "changeset:publish": "changeset publish",
+    "check": "npm run lint && npm run format:check",
+    "check:fix": "npm run format && npm run lint",
     "lint": "oxlint .",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "test": "vitest run",
+    "test:e2e": "playwright test --config tests/e2e/playwright.config.ts",
+    "test:e2e:default-path": "VITE_TLS_DEFAULT_PATH=true playwright test --config tests/e2e/playwright.config.ts tests/e2e/default-path.spec.ts",
+    "test:e2e:matrix": "bash tests/e2e/run-vite-matrix.sh",
+    "verify:zero-deps": "npm run build && node scripts/verify-zero-runtime-dependencies.mjs",
+    "verify:package": "npm run build && node scripts/verify-package.mjs",
+    "verify:published": "node scripts/verify-published-release.mjs",
+    "verify:release-dry-run": "node scripts/verify-release-dry-run.mjs",
+    "verify:workflows": "node scripts/verify-workflows.mjs",
+    "playwright:install": "playwright install chromium",
+    "prepublishOnly": "npm run build",
+    "prepare": "husky",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {},
   "devDependencies": {
+    "@changesets/cli": "^2.31.1",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^26.1.2",
+    "husky": "^9.1.7",
     "oxfmt": "^0.62.0",
     "oxlint": "^1.77.0",
     "tsup": "^8.5.1",
     "typescript": "^7.0.2",
     "vite": "^8.2.0",
-    "vitest": "^4.1.10"
+    "vite3": "npm:vite@3.2.11",
+    "vite4": "npm:vite@4.5.14",
+    "vite5": "npm:vite@5.4.21",
+    "vite6": "npm:vite@6.4.3",
+    "vite7": "npm:vite@7.3.6",
+    "vitest": "^4.1.10",
+    "yaml": "^2.9.0"
   },
   "peerDependencies": {
     "vite": "^3.0.0 || ^4.0.0 || ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0"

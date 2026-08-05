@@ -1,0 +1,11 @@
+{
+  "repository": "vampaz/vite-plugin-local-tls",
+  "remoteMasterSha": "cccccccccccccccccccccccccccccccccccccccc",
+  "workflowRun": {
+    "conclusion": "cancelled",
+    "event": "push",
+    "headBranch": "master",
+    "headRepository": "vampaz/vite-plugin-local-tls",
+    "headSha": "cccccccccccccccccccccccccccccccccccccccc"
+  }
+}
