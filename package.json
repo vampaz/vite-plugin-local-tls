@@ -1,0 +1,63 @@
+{
+  "name": "vite-plugin-local-tls",
+  "version": "0.0.1",
+  "description": "Zero-dependency local HTTPS routing for concurrent Vite checkouts.",
+  "keywords": [
+    "https",
+    "local-development",
+    "plugin",
+    "tls",
+    "vite",
+    "worktree"
+  ],
+  "homepage": "https://github.com/vampaz/vite-plugin-local-tls#readme",
+  "bugs": {
+    "url": "https://github.com/vampaz/vite-plugin-local-tls/issues"
+  },
+  "license": "MIT",
+  "author": "vampaz",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vampaz/vite-plugin-local-tls.git"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "lint": "oxlint .",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "oxfmt": "^0.62.0",
+    "oxlint": "^1.77.0",
+    "tsup": "^8.5.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.0",
+    "vitest": "^4.1.10"
+  },
+  "peerDependencies": {
+    "vite": "^3.0.0 || ^4.0.0 || ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
