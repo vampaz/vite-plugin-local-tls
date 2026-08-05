@@ -1,4 +1,5 @@
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { CertificateImportStore } from './certificate-import.js';
 import { resolveCertificatePolicy } from './certificate-policy.js';
 import { CertificateManager } from './certificates.js';
@@ -58,7 +59,10 @@ export class LocalTlsDaemon {
       const transferOwnership = this.#options.transferOwnership ?? transferServiceOwnership;
       await transferOwnership(this.#options.runAsUser, [
         this.#options.paths.stateDirectory,
+        path.dirname(this.#options.paths.runtimeDirectory),
         this.#options.paths.runtimeDirectory,
+        this.#options.paths.lockPath,
+        this.#options.paths.stateFile,
         this.#options.paths.certificateDirectory,
         this.#options.paths.importedCertificateDirectory,
         authority.certificatePath,

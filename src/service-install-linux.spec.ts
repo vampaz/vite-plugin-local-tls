@@ -62,6 +62,7 @@ describe('Linux startup service', () => {
     expect(installedDefinition).toContain('AmbientCapabilities=CAP_NET_BIND_SERVICE');
     expect(installedDefinition).toContain('CapabilityBoundingSet=CAP_NET_BIND_SERVICE');
     expect(installedDefinition).toContain('NoNewPrivileges=true');
+    expect(installedDefinition).not.toContain('ProtectSystem=strict');
     expect(installedDefinition).toContain('"--service"');
     expect(installedDefinition).toContain('service-runtime/cli-test.js');
     expect(installedDefinition).not.toContain('User=root');

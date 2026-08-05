@@ -274,10 +274,6 @@ function systemdDefinition(options: ServiceInstallOptions): string {
   if (options.controlSocket) {
     arguments_.push('--control-socket', options.controlSocket);
   }
-  const writablePaths = [options.paths.stateDirectory, options.paths.runtimeDirectory];
-  if (options.controlSocket && !options.controlSocket.startsWith('\\\\.\\pipe\\')) {
-    writablePaths.push(path.dirname(options.controlSocket));
-  }
   return [
     `# ${OWNER_MARKER}`,
     '[Unit]',
@@ -294,8 +290,6 @@ function systemdDefinition(options: ServiceInstallOptions): string {
     'AmbientCapabilities=CAP_NET_BIND_SERVICE',
     'CapabilityBoundingSet=CAP_NET_BIND_SERVICE',
     'NoNewPrivileges=true',
-    'ProtectSystem=strict',
-    `ReadWritePaths=${writablePaths.map(systemdQuote).join(' ')}`,
     '',
     '[Install]',
     'WantedBy=multi-user.target',

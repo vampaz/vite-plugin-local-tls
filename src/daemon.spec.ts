@@ -71,9 +71,17 @@ describe('LocalTlsDaemon', () => {
 
     expect(transferOwnership).toHaveBeenCalledWith(
       { uid: 501, gid: 20 },
-      expect.arrayContaining([paths.stateDirectory, paths.runtimeDirectory, paths.caKeyPath]),
+      expect.arrayContaining([
+        paths.stateDirectory,
+        paths.runtimeDirectory,
+        paths.lockPath,
+        paths.caKeyPath,
+      ]),
     );
     expect(dropPrivileges).toHaveBeenCalledWith({ uid: 501, gid: 20 }, []);
+    expect(transferOwnership.mock.invocationCallOrder[0]!).toBeLessThan(
+      dropPrivileges.mock.invocationCallOrder[0]!,
+    );
     expect(await access(paths.stateFile)).toBeUndefined();
   });
 
