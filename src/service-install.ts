@@ -657,7 +657,12 @@ export async function uninstallStartupService(
     await runner('schtasks.exe', ['/End', '/TN', record.identifier]).catch(() => undefined);
     await runner('schtasks.exe', ['/Delete', '/TN', record.identifier, '/F']);
     if (record.runtimeDirectory) {
-      await rm(record.runtimeDirectory, { recursive: true, force: true });
+      await rm(record.runtimeDirectory, {
+        recursive: true,
+        force: true,
+        maxRetries: 100,
+        retryDelay: 100,
+      });
     }
   }
   await unlink(recordPath(options));
