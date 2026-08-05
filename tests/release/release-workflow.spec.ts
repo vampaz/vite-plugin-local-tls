@@ -69,7 +69,7 @@ describe('Release workflow', () => {
   it('checks out and revalidates the exact successful current-master SHA', async () => {
     const { source, workflow } = await readReleaseWorkflow();
     const steps = workflow.jobs.publish.steps as Array<Record<string, any>>;
-    const checkout = steps.find((step) => step.uses === 'actions/checkout@v4');
+    const checkout = steps.find((step) => step.uses === 'actions/checkout@v7');
     const freshness = steps.find((step) => step.name === 'Verify tested commit is current master');
 
     expect(checkout?.with.ref).toBe('${{ github.event.workflow_run.head_sha }}');
@@ -89,7 +89,7 @@ describe('Release workflow', () => {
       'pull-requests': 'write',
       'id-token': 'write',
     });
-    expect(steps.some((step) => step.uses === 'actions/setup-node@v4')).toBe(true);
+    expect(steps.some((step) => step.uses === 'actions/setup-node@v7')).toBe(true);
     expect(steps.some((step) => step.run === 'npm install --global npm@latest')).toBe(true);
     expect(steps.some((step) => step.run === 'npm ci')).toBe(true);
     expect(changesets?.with.publish).toBe('npm run changeset:publish');

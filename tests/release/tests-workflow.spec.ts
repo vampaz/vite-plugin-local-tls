@@ -36,8 +36,8 @@ describe('Tests workflow', () => {
     const { source, workflow } = await readWorkflow('tests.yml');
     const commands = allRunCommands(workflow);
 
-    expect(source).toContain('actions/checkout@v4');
-    expect(source).toContain('actions/setup-node@v4');
+    expect(source).toContain('actions/checkout@v7');
+    expect(source).toContain('actions/setup-node@v7');
     expect(source).toContain('node-version: 24');
     expect(source).toContain('cache-dependency-path: package-lock.json');
     expect(commands).toEqual(['npm ci', 'npm run check', 'npm run test', 'npm run build']);
@@ -51,7 +51,7 @@ describe('reusable E2E workflow', () => {
 
     expect(workflow.name).toBe('E2E');
     expect(workflow.on).toHaveProperty('workflow_call');
-    expect(source).toContain('actions/cache@v4');
+    expect(source).toContain('actions/cache@v6');
     expect(source).toContain('node-version: 24');
     expect(commands).toContain('openssl');
     expect(commands).toContain('libnss3-tools');
