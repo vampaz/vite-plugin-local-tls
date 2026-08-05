@@ -40,6 +40,16 @@ describe('state paths', () => {
     expect(paths.socketPath.length).toBeLessThan(108);
   });
 
+  it('uses the service-pinned runtime directory exactly', () => {
+    const paths = getStatePaths('ignored-runtime-namespace', 'darwin', {
+      HOME: '/Users/tester',
+      VITE_LOCAL_TLS_RUNTIME_DIRECTORY: '/private/runtime/local-tls',
+    });
+
+    expect(paths.runtimeDirectory).toBe('/private/runtime/local-tls');
+    expect(paths.socketPath).toBe('/private/runtime/local-tls/control.sock');
+  });
+
   it('uses a per-user named pipe on Windows', () => {
     const paths = getStatePaths('Default', 'win32', {
       USERPROFILE: 'C:\\Users\\tester',

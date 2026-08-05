@@ -53,7 +53,8 @@ export function getStatePaths(
   const runtimeDirectory =
     platform === 'win32'
       ? stateDirectory
-      : pathApi.join(
+      : environment.VITE_LOCAL_TLS_RUNTIME_DIRECTORY ||
+        pathApi.join(
           environment.XDG_RUNTIME_DIR || os.tmpdir(),
           `vite-plugin-local-tls-${runtimeUserId}`,
           safeNamespace,

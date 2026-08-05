@@ -65,6 +65,8 @@ describe('macOS startup service', () => {
     expect(definition).toContain('<string>--namespace</string>');
     expect(definition).not.toContain('<key>UserName</key>');
     expect(definition).toContain('<key>VITE_LOCAL_TLS_USER_ID</key>');
+    expect(definition).toContain('<key>VITE_LOCAL_TLS_RUNTIME_DIRECTORY</key>');
+    expect(definition).toContain(options.paths.runtimeDirectory);
     expect(definition).toContain('<string>developer</string>');
     expect(installed.record?.nodePath).toBe(
       path.join(temporaryDirectory, 'system-runtime', 'node'),
