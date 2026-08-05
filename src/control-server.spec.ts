@@ -114,6 +114,34 @@ describe('ControlServer', () => {
     expect(registry.size).toBe(0);
   });
 
+  it('removes a route when its connection closes during asynchronous validation', async () => {
+    await server.stop();
+    let finishValidation: () => void = function finishValidation(): void {};
+    let validationStarted: () => void = function validationStarted(): void {};
+    const validation = new Promise<void>((resolve) => {
+      finishValidation = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      validationStarted = resolve;
+    });
+    server = new ControlServer({
+      socketPath,
+      registry,
+      async validateRoutes(): Promise<void> {
+        validationStarted();
+        await validation;
+      },
+    });
+    await server.start();
+    const socket = await connect();
+    socket.end(encodeControlMessage(registerMessage('owner-token-00000001')));
+    await started;
+
+    finishValidation();
+
+    await expect.poll(() => registry.size).toBe(0);
+  });
+
   it('reclaims a stale socket but refuses a non-socket path', async () => {
     await server.stop();
     await writeFile(socketPath, 'not a socket');

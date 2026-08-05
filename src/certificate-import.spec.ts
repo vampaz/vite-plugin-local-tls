@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -86,5 +86,41 @@ describe('CertificateImportStore', () => {
     await expect(store.removeCertificate('one.example.test')).resolves.toBe(true);
     await expect(store.getCertificate('one.example.test')).resolves.toBeNull();
     await expect(store.getCertificate('two.example.test')).resolves.toBeDefined();
+  });
+
+  it('rejects a record that points outside its exact-host directory', async () => {
+    const sourceDirectory = path.join(temporaryDirectory, 'source');
+    await mkdir(sourceDirectory);
+    await createTestCertificate(sourceDirectory, 'app.example.test');
+    const record = await store.importCertificate({
+      hostname: 'app.example.test',
+      certificatePath: path.join(sourceDirectory, 'certificate.pem'),
+      keyPath: path.join(sourceDirectory, 'key.pem'),
+    });
+    const outsideDirectory = path.join(
+      temporaryDirectory,
+      'outside',
+      path.basename(path.dirname(record.certificatePath)),
+    );
+    await mkdir(outsideDirectory, { recursive: true });
+    const outsideCertificatePath = path.join(outsideDirectory, 'certificate.pem');
+    const outsideKeyPath = path.join(outsideDirectory, 'key.pem');
+    await Promise.all([
+      copyFile(record.certificatePath, outsideCertificatePath),
+      copyFile(record.keyPath, outsideKeyPath),
+    ]);
+    await writeFile(
+      path.join(path.dirname(record.certificatePath), 'record.json'),
+      `${JSON.stringify({
+        ...record,
+        certificatePath: outsideCertificatePath,
+        keyPath: outsideKeyPath,
+        chainPath: path.join(outsideDirectory, 'chain.pem'),
+      })}\n`,
+    );
+
+    await expect(store.getCertificate('app.example.test')).resolves.toBeNull();
+    await expect(store.removeCertificate('app.example.test')).resolves.toBe(false);
+    await expect(lstat(outsideDirectory)).resolves.toBeDefined();
   });
 });

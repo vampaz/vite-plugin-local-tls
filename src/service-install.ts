@@ -54,6 +54,7 @@ function validateDefinitionValue(value: string, label: string): string {
 }
 
 function safeServiceKey(options: ServiceInstallOptions): string {
+  const platform = options.platform ?? process.platform;
   const key = sanitizeNamespace(options.namespace);
   if (!/^[a-z0-9-]{1,40}$/.test(key)) {
     throw new Error(`Unsafe service namespace: ${key}`);
@@ -61,11 +62,32 @@ function safeServiceKey(options: ServiceInstallOptions): string {
   validateDefinitionValue(options.namespace, 'Service namespace');
   validateDefinitionValue(options.nodePath, 'Node path');
   validateDefinitionValue(options.cliPath, 'CLI path');
+  validateDefinitionValue(options.homeDirectory ?? os.homedir(), 'Home directory');
+  validateDefinitionValue(options.username ?? os.userInfo().username, 'Username');
+  validateDefinitionValue(options.paths.stateDirectory, 'State directory');
+  validateDefinitionValue(options.paths.runtimeDirectory, 'Runtime directory');
+  validateDefinitionValue(options.paths.socketPath, 'Control socket');
   if (options.controlSocket) {
     validateDefinitionValue(options.controlSocket, 'Control socket');
   }
   if (options.runtimeInstallDirectory) {
     validateDefinitionValue(options.runtimeInstallDirectory, 'Service runtime directory');
+  }
+  if (
+    platform === 'linux' &&
+    !/^[a-zA-Z_][a-zA-Z0-9_-]*\$?$/.test(options.username ?? os.userInfo().username)
+  ) {
+    throw new Error('Username cannot be represented safely in a systemd service.');
+  }
+  if (platform === 'darwin') {
+    for (const [label, value] of [
+      ['User ID', options.uid ?? os.userInfo().uid],
+      ['Group ID', options.gid ?? os.userInfo().gid],
+    ] as const) {
+      if (!Number.isSafeInteger(value) || value < 0) {
+        throw new Error(`${label} must be a non-negative integer.`);
+      }
+    }
   }
   return key;
 }
@@ -128,7 +150,7 @@ function assertExpectedRecord(
   }
   const runtimeDirectory = expectedRuntimeDirectory(options, platform, key);
   const cliPath = path.join(runtimeDirectory, platform === 'darwin' ? 'cli.js' : `cli-${key}.js`);
-  const nodePath = platform === 'darwin' ? path.join(runtimeDirectory, 'node') : options.nodePath;
+  const nodePath = path.join(runtimeDirectory, platform === 'win32' ? 'node.exe' : 'node');
   if (
     record.runtimeDirectory !== runtimeDirectory ||
     record.cliPath !== cliPath ||
@@ -250,16 +272,22 @@ function launchdDefinition(options: ServiceInstallOptions, identifier: string): 
 async function installUserRuntime(
   options: ServiceInstallOptions,
   key: string,
-): Promise<{ cliPath: string; runtimeDirectory: string }> {
+): Promise<{ nodePath: string; cliPath: string; runtimeDirectory: string }> {
   const runtimeDirectory =
     options.runtimeInstallDirectory ?? path.join(options.paths.stateDirectory, 'service-runtime');
+  const nodePath = path.join(
+    runtimeDirectory,
+    (options.platform ?? process.platform) === 'win32' ? 'node.exe' : 'node',
+  );
   const cliPath = path.join(runtimeDirectory, `cli-${key}.js`);
   await mkdir(runtimeDirectory, { recursive: true, mode: 0o700 });
+  await copyFile(options.nodePath, nodePath);
   await copyFile(options.cliPath, cliPath);
   if ((options.platform ?? process.platform) !== 'win32') {
+    await chmod(nodePath, 0o700);
     await chmod(cliPath, 0o700);
   }
-  return { cliPath, runtimeDirectory };
+  return { nodePath, cliPath, runtimeDirectory };
 }
 
 function systemdDefinition(options: ServiceInstallOptions): string {
@@ -368,14 +396,19 @@ async function installLinux(
   options: ServiceInstallOptions,
   runner: ServiceInstallCommandRunner,
   identifier: string,
-): Promise<{ definitionPath: string; cliPath: string; runtimeDirectory: string }> {
+): Promise<{
+  definitionPath: string;
+  nodePath: string;
+  cliPath: string;
+  runtimeDirectory: string;
+}> {
   const definitionPath = path.join(
     options.definitionDirectory ?? '/etc/systemd/system',
     `${identifier}.service`,
   );
   await assertOwnedDefinition(definitionPath);
   const runtime = await installUserRuntime(options, safeServiceKey(options));
-  const serviceOptions = { ...options, cliPath: runtime.cliPath };
+  const serviceOptions = { ...options, nodePath: runtime.nodePath, cliPath: runtime.cliPath };
   const temporaryPath = path.join(options.paths.stateDirectory, `${identifier}.service.tmp`);
   await writeFile(temporaryPath, systemdDefinition(serviceOptions), { mode: 0o600 });
   const elevated = elevatedRunner(options);
@@ -395,7 +428,12 @@ async function installLinux(
   } finally {
     await unlink(temporaryPath).catch(() => undefined);
   }
-  return { definitionPath, cliPath: runtime.cliPath, runtimeDirectory: runtime.runtimeDirectory };
+  return {
+    definitionPath,
+    nodePath: runtime.nodePath,
+    cliPath: runtime.cliPath,
+    runtimeDirectory: runtime.runtimeDirectory,
+  };
 }
 
 async function windowsTaskExists(
@@ -411,13 +449,13 @@ async function installWindows(
   options: ServiceInstallOptions,
   runner: ServiceInstallCommandRunner,
   identifier: string,
-): Promise<{ cliPath: string; runtimeDirectory: string }> {
+): Promise<{ nodePath: string; cliPath: string; runtimeDirectory: string }> {
   if (!(await readRecord(options)) && (await windowsTaskExists(runner, identifier))) {
     throw new Error(`Refusing to replace unrelated scheduled task: ${identifier}`);
   }
   const runtime = await installUserRuntime(options, safeServiceKey(options));
   const command = [
-    windowsQuote(options.nodePath),
+    windowsQuote(runtime.nodePath),
     windowsQuote(runtime.cliPath),
     'proxy',
     'start',
@@ -465,10 +503,12 @@ export async function installStartupService(
   } else if (platform === 'linux') {
     const installed = await installLinux(options, runner, identifier);
     definitionPath = installed.definitionPath;
+    installedNodePath = installed.nodePath;
     installedCliPath = installed.cliPath;
     runtimeDirectory = installed.runtimeDirectory;
   } else if (platform === 'win32') {
     const installed = await installWindows(options, runner, identifier);
+    installedNodePath = installed.nodePath;
     installedCliPath = installed.cliPath;
     runtimeDirectory = installed.runtimeDirectory;
   } else {

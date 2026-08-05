@@ -51,8 +51,16 @@ test('runs the packed default plugin on trusted port 443 with WSS HMR', async ({
   const nssDirectory = path.join(e2e.stateHome, '.pki', 'nssdb');
   const browserProfile = await mkdtemp(path.join(os.tmpdir(), 'vite-local-tls-browser-'));
   let server: Awaited<ReturnType<typeof startServer>> | null = null;
+  let serviceInstalled = false;
   try {
     await run(cliPath, ['trust', '--namespace', e2e.namespace], e2e.fixtureDirectory, environment);
+    await run(
+      cliPath,
+      ['service', 'install', '--namespace', e2e.namespace],
+      e2e.fixtureDirectory,
+      environment,
+    );
+    serviceInstalled = true;
     await mkdir(nssDirectory, { recursive: true });
     await run(
       'certutil',
@@ -104,6 +112,14 @@ test('runs the packed default plugin on trusted port 443 with WSS HMR', async ({
     }
   } finally {
     await server?.stop().catch(() => undefined);
+    if (serviceInstalled) {
+      await run(
+        cliPath,
+        ['service', 'uninstall', '--namespace', e2e.namespace],
+        e2e.fixtureDirectory,
+        environment,
+      ).catch(() => undefined);
+    }
     await run(
       cliPath,
       ['untrust', '--namespace', e2e.namespace],

@@ -46,7 +46,7 @@ describe('Linux startup service', () => {
       platform: 'linux' as const,
       namespace: 'test',
       paths: statePaths(),
-      nodePath: '/usr/bin/node',
+      nodePath: process.execPath,
       cliPath: path.join(temporaryDirectory, 'cli.js'),
       homeDirectory: '/home/carlos',
       username: 'carlos',
@@ -66,6 +66,7 @@ describe('Linux startup service', () => {
     expect(installedDefinition).toContain('VITE_LOCAL_TLS_RUNTIME_DIRECTORY');
     expect(installedDefinition).not.toContain('ProtectSystem=strict');
     expect(installedDefinition).toContain('"--service"');
+    expect(installedDefinition).toContain('service-runtime/node');
     expect(installedDefinition).toContain('service-runtime/cli-test.js');
     expect(installedDefinition).not.toContain('User=root');
     expect(runner).toHaveBeenCalledWith('sudo', [
@@ -85,5 +86,28 @@ describe('Linux startup service', () => {
       '--',
       result.record?.definitionPath,
     ]);
+    expect(result.record?.nodePath).toContain('service-runtime/node');
+  });
+
+  it('rejects systemd directive injection through environment-derived values', async () => {
+    const runner = vi.fn(async () => ({ stdout: '', stderr: '' }));
+    const cliPath = path.join(temporaryDirectory, 'cli.js');
+    await writeFile(cliPath, "console.log('service');\n");
+
+    await expect(
+      installStartupService({
+        platform: 'linux',
+        namespace: 'test',
+        paths: statePaths(),
+        nodePath: process.execPath,
+        cliPath,
+        homeDirectory: '/home/test\nUser=root',
+        username: 'test',
+        definitionDirectory: path.join(temporaryDirectory, 'systemd'),
+        runner,
+        useSudo: true,
+      }),
+    ).rejects.toThrow(/Home directory contains unsupported control characters/);
+    expect(runner).not.toHaveBeenCalled();
   });
 });

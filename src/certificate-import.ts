@@ -99,7 +99,13 @@ export class CertificateImportStore {
       const record = JSON.parse(
         await readFile(path.join(directory, 'record.json'), 'utf8'),
       ) as CertificateRecord;
-      if (record.hostname !== validatedHostname || record.source !== 'imported') {
+      if (
+        record.hostname !== validatedHostname ||
+        record.source !== 'imported' ||
+        record.certificatePath !== path.join(directory, 'certificate.pem') ||
+        record.keyPath !== path.join(directory, 'key.pem') ||
+        record.chainPath !== path.join(directory, 'chain.pem')
+      ) {
         return null;
       }
       const [certificatePem, keyPem] = await Promise.all([

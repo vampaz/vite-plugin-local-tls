@@ -20,6 +20,7 @@ type ConnectionState = {
   unsubscribers: Map<string, () => void>;
   buffer: string;
   queue: Promise<void>;
+  cleanupScheduled: boolean;
   cleaned: boolean;
 };
 
@@ -132,13 +133,14 @@ export class ControlServer {
       unsubscribers: new Map(),
       buffer: '',
       queue: Promise.resolve(),
+      cleanupScheduled: false,
       cleaned: false,
     };
     socket.setEncoding('utf8');
     socket.on('data', (chunk: string) => this.#handleData(socket, state, chunk));
-    socket.once('end', () => this.#cleanupConnection(socket, state));
-    socket.once('close', () => this.#cleanupConnection(socket, state));
-    socket.once('error', () => this.#cleanupConnection(socket, state));
+    socket.once('end', () => this.#scheduleCleanup(socket, state));
+    socket.once('close', () => this.#scheduleCleanup(socket, state));
+    socket.once('error', () => this.#scheduleCleanup(socket, state));
   }
 
   #handleData(socket: Socket, state: ConnectionState, chunk: string): void {
@@ -251,6 +253,18 @@ export class ControlServer {
       type: message.type === 'unregister' ? 'unregistered' : 'heartbeat',
       requestId: message.requestId,
       hostnames,
+    });
+  }
+
+  #scheduleCleanup(socket: Socket, state: ConnectionState): void {
+    if (state.cleanupScheduled) {
+      return;
+    }
+    state.cleanupScheduled = true;
+    state.queue = state.queue.then(() => {
+      const operation = this.#queue.then(() => this.#cleanupConnection(socket, state));
+      this.#queue = operation;
+      return operation;
     });
   }
 

@@ -79,7 +79,7 @@ export class TrustStore {
         this.#macosKeychain(),
         this.#options.authority.certificatePath,
       ]);
-    } else if (requirements.platform === 'win32' || requirements.isWsl) {
+    } else if (requirements.trustTool === 'certutil') {
       const certificatePath = requirements.isWsl
         ? await this.#windowsPath(this.#options.authority.certificatePath)
         : this.#options.authority.certificatePath;
@@ -110,7 +110,7 @@ export class TrustStore {
         this.#macosKeychain(),
       ]);
       trusted = pemFingerprints(result.stdout).includes(authority.fingerprint);
-    } else if (requirements.platform === 'win32' || requirements.isWsl) {
+    } else if (requirements.trustTool === 'certutil') {
       const result = await this.#run(requirements.trustToolPath, [
         '-user',
         '-store',
@@ -164,7 +164,7 @@ export class TrustStore {
         authority.fingerprintSha1.toUpperCase(),
         this.#macosKeychain(),
       ]);
-    } else if (requirements.platform === 'win32' || requirements.isWsl) {
+    } else if (requirements.trustTool === 'certutil') {
       await this.#run(requirements.trustToolPath, [
         '-user',
         '-delstore',

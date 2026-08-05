@@ -113,7 +113,7 @@ npm exec -- vite-local-tls cert list
 npm exec -- vite-local-tls cert remove --hostname app.example.test
 ```
 
-When port 443 needs a persistent service, installation copies the service entry point out of the consumer checkout. macOS installs a root-owned LaunchDaemon that binds the low port and then drops to the installing user's UID and GID before opening the control channel. Linux runs as the installing user with only `CAP_NET_BIND_SERVICE`. Windows runs a current-user task at logon, preserving that user's CA trust, state directory, and named-pipe identity.
+When port 443 needs a persistent service, installation copies Node and the bundled service entry point into a durable runtime outside the consumer checkout. macOS installs a root-owned LaunchDaemon that binds the low port and then drops to the installing user's UID and GID before opening the control channel. Linux runs as the installing user with only `CAP_NET_BIND_SERVICE`. Windows runs a current-user task at logon, preserving that user's CA trust, state directory, and named-pipe identity.
 
 For a custom non-local hostname with `internalTls: false`, import a certificate whose key and exact SAN match the hostname before starting Vite. The `--chain` argument is optional.
 

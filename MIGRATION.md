@@ -84,7 +84,7 @@ npm exec -- vite-local-tls proxy status
 npm exec -- vite-local-tls service install
 ```
 
-The installed service uses a durable copy outside the consumer checkout. On macOS it binds the low port through a root-owned LaunchDaemon and drops to the installing user before opening its control channel. Linux grants only the low-port capability to the user service. Windows keeps the task, CA state, and control channel under the current user.
+The installed service uses durable copies of Node and the bundled CLI outside the consumer checkout. On macOS it binds the low port through a root-owned LaunchDaemon and drops to the installing user before opening its control channel. Linux grants only the low-port capability to the user service. Windows keeps the task, CA state, and control channel under the current user.
 
 The private control channel replaces Caddy Admin API requests and the cross-process ownership files built around them. It is not reachable over TCP. Do not translate an old `caddyApiUrl` value into an HTTP address; choose a private `controlSocket` only when the default per-user path is unsuitable.
 

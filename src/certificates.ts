@@ -6,7 +6,18 @@ import {
   randomBytes,
   X509Certificate,
 } from 'node:crypto';
-import { chmod, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  lstat,
+  mkdtemp,
+  open,
+  readFile,
+  rename,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import path from 'node:path';
 import { createSecureContext, type SecureContext } from 'node:tls';
 import { validateHostname } from './control-protocol.js';
@@ -22,6 +33,13 @@ const CA_VALIDITY_DAYS = 3650;
 const EXPIRATION_WARNING_MS = 30 * 24 * 60 * 60 * 1000;
 const LEAF_RENEWAL_MS = 7 * 24 * 60 * 60 * 1000;
 const LEAF_VALIDITY_DAYS = 30;
+const AUTHORITY_LOCK_STALE_MS = 30_000;
+const AUTHORITY_LOCK_TIMEOUT_MS = 30_000;
+const AUTHORITY_LOCK_RETRY_MS = 25;
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
 
 function execute(command: string, arguments_: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -98,21 +116,64 @@ export class CertificateManager {
 
   async #ensureCertificateAuthority(): Promise<CertificateAuthorityRecord> {
     await ensureStatePaths(this.#options.paths);
-    const certificateExists = await stat(this.#options.paths.caCertificatePath)
-      .then(() => true)
-      .catch(() => false);
-    const keyExists = await stat(this.#options.paths.caKeyPath)
-      .then(() => true)
-      .catch(() => false);
-    if (certificateExists !== keyExists) {
-      throw new Error(
-        'The local CA is incomplete. Refusing to overwrite it; run `vite-local-tls clean --ca` after removing trust for the old CA.',
-      );
+    return this.#withAuthorityLock(async () => {
+      const certificateExists = await stat(this.#options.paths.caCertificatePath)
+        .then(() => true)
+        .catch(() => false);
+      const keyExists = await stat(this.#options.paths.caKeyPath)
+        .then(() => true)
+        .catch(() => false);
+      if (certificateExists !== keyExists) {
+        throw new Error(
+          'The local CA is incomplete. Refusing to overwrite it; run `vite-local-tls clean --ca` after removing trust for the old CA.',
+        );
+      }
+      if (!certificateExists) {
+        await this.#generateCertificateAuthority();
+      }
+      return this.#readCertificateAuthority();
+    });
+  }
+
+  async #withAuthorityLock<T>(operation: () => Promise<T>): Promise<T> {
+    const lockPath = `${this.#options.paths.caStatePath}.lock`;
+    const deadline = Date.now() + AUTHORITY_LOCK_TIMEOUT_MS;
+    while (true) {
+      const handle = await open(lockPath, 'wx', 0o600).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'EEXIST') {
+          return null;
+        }
+        throw error;
+      });
+      if (handle) {
+        try {
+          await handle.writeFile(`${process.pid}\n`);
+          return await operation();
+        } finally {
+          await handle.close();
+          await unlink(lockPath).catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== 'ENOENT') {
+              throw error;
+            }
+          });
+        }
+      }
+      const stale = await lstat(lockPath)
+        .then((stats) => !stats.isFile() || Date.now() - stats.mtimeMs > AUTHORITY_LOCK_STALE_MS)
+        .catch((lockError: NodeJS.ErrnoException) => lockError.code === 'ENOENT');
+      if (stale) {
+        await unlink(lockPath).catch((lockError: NodeJS.ErrnoException) => {
+          if (lockError.code !== 'ENOENT') {
+            throw lockError;
+          }
+        });
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(`Timed out waiting for the local CA lock at ${lockPath}.`);
+      }
+      await delay(AUTHORITY_LOCK_RETRY_MS);
     }
-    if (!certificateExists) {
-      await this.#generateCertificateAuthority();
-    }
-    return this.#readCertificateAuthority();
   }
 
   async #generateCertificateAuthority(): Promise<void> {

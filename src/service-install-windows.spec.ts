@@ -33,11 +33,14 @@ afterEach(async () => {
 });
 
 describe('Windows startup service', () => {
-  it('creates and removes a current-user logon task with a durable CLI copy', async () => {
+  it('creates and removes a current-user logon task with a durable runtime copy', async () => {
     let queryCount = 0;
+    const sourceNodePath = path.join(temporaryDirectory, 'node.exe');
     const sourceCliPath = path.join(temporaryDirectory, 'cli.js');
     const runtimeDirectory = path.join(temporaryDirectory, 'service-runtime');
+    const installedNodePath = path.join(runtimeDirectory, 'node.exe');
     const installedCliPath = path.join(runtimeDirectory, 'cli-test.js');
+    await writeFile(sourceNodePath, 'node');
     await writeFile(sourceCliPath, "console.log('service');\n");
     const runner = vi.fn(async (_command: string, arguments_: string[]) => {
       if (arguments_[0] === '/Query') {
@@ -46,7 +49,7 @@ describe('Windows startup service', () => {
           throw new Error('Task does not exist.');
         }
         return {
-          stdout: `<Task><Command>C:\\Program Files\\nodejs\\node.exe ${installedCliPath} --service test</Command></Task>`,
+          stdout: `<Task><Command>${installedNodePath} ${installedCliPath} --service test</Command></Task>`,
           stderr: '',
         };
       }
@@ -56,22 +59,23 @@ describe('Windows startup service', () => {
       platform: 'win32' as const,
       namespace: 'test',
       paths: statePaths(),
-      nodePath: 'C:\\Program Files\\nodejs\\node.exe',
+      nodePath: sourceNodePath,
       cliPath: sourceCliPath,
       runtimeInstallDirectory: runtimeDirectory,
       runner,
     };
 
-    await installStartupService(options);
+    const installed = await installStartupService(options);
 
     const createCall = runner.mock.calls.find(([, arguments_]) => arguments_[0] === '/Create');
     expect(createCall?.[0]).toBe('schtasks.exe');
     expect(createCall?.[1]).toContain('LIMITED');
     expect(createCall?.[1]).toContain('ONLOGON');
     expect(createCall?.[1]).toContain('Vite Local TLS\\test');
-    expect(createCall?.[1].join(' ')).toContain('"C:\\Program Files\\nodejs\\node.exe"');
+    expect(createCall?.[1].join(' ')).toContain(installedNodePath);
     expect(createCall?.[1].join(' ')).toContain(installedCliPath);
     expect(createCall?.[1].join(' ')).toContain('--service');
+    expect(installed.record?.nodePath).toBe(installedNodePath);
 
     await uninstallStartupService(options);
 

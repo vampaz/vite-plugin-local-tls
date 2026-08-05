@@ -1,5 +1,5 @@
 import { X509Certificate } from 'node:crypto';
-import { chmod, mkdtemp, readFile, rm, stat, unlink } from 'node:fs/promises';
+import { access, chmod, mkdtemp, readFile, rm, stat, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -32,6 +32,20 @@ describe('CertificateManager CA', () => {
     if (process.platform !== 'win32') {
       expect(keyStats.mode & 0o777).toBe(0o600);
     }
+  });
+
+  it('serializes first-run CA creation across manager instances', async () => {
+    const managers = Array.from(
+      { length: 4 },
+      () => new CertificateManager({ paths, opensslPath: 'openssl' }),
+    );
+
+    const authorities = await Promise.all(
+      managers.map((manager) => manager.ensureCertificateAuthority()),
+    );
+
+    expect(new Set(authorities.map(({ fingerprint }) => fingerprint)).size).toBe(1);
+    await expect(access(`${paths.caStatePath}.lock`)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('returns the same CA and deduplicates concurrent creation', async () => {
