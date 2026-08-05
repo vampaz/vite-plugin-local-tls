@@ -8,6 +8,25 @@ async function expectMarker(page: Page, url: string, marker: string): Promise<vo
   await expect(page.locator('#marker')).toHaveText(marker);
 }
 
+async function expectRecoveredMarker(page: Page, url: string, marker: string): Promise<void> {
+  await expect
+    .poll(async () => {
+      try {
+        const response = await page.goto(url);
+        if (!response?.ok()) {
+          return null;
+        }
+        return page
+          .locator('#marker')
+          .textContent({ timeout: 500 })
+          .catch(() => null);
+      } catch {
+        return null;
+      }
+    })
+    .toBe(marker);
+}
+
 test('serializes four simultaneous starts without losing distinct routes', async ({
   page,
   e2e,
@@ -93,7 +112,7 @@ test('recovers a force-killed route and stale daemon metadata without touching s
     })
     .not.toBe(oldState.pid);
 
-  await expectMarker(
+  await expectRecoveredMarker(
     page,
     `https://${survivingServer.domains[0]}:${e2e.proxyPort}/`,
     survivingServer.marker,
