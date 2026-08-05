@@ -379,44 +379,44 @@ Every source test remains adjacent to its source file. Cross-package contract an
     - Verification: `npm run test -- src/trust-store-windows.spec.ts`
     - Commit: `feat: manage windows CA trust`
 
-- [ ] Phase 5: Compose the daemon and safe lifecycle tooling
+- [x] Phase 5: Compose the daemon and safe lifecycle tooling
 
-  - [ ] Step 5.1: Compose the proxy, registry, certificates, and control server into one daemon
+  - [x] Step 5.1: Compose the proxy, registry, certificates, and control server into one daemon
     - Objective: Start components in a fail-closed order, acknowledge readiness only after TLS listeners and the control channel are active, write versioned PID/state metadata atomically, shut down cleanly, and leave no route or socket state after termination.
     - Files: `src/daemon.ts`, `src/daemon.spec.ts`, `src/interfaces/service-state.ts`
     - Test file: `src/daemon.spec.ts`
     - Verification: `npm run test -- src/daemon.spec.ts`
     - Commit: `feat: compose local TLS proxy daemon`
 
-  - [ ] Step 5.2: Coordinate singleton startup across simultaneous Vite processes
+  - [x] Step 5.2: Coordinate singleton startup across simultaneous Vite processes
     - Objective: Use a bounded startup lock, distinguish a healthy daemon from stale metadata or an unrelated listener, let only one process start the daemon, and let all waiting clients connect without losing registrations.
     - Files: `src/service.ts`, `src/service.spec.ts`, `src/daemon.ts`
     - Test file: `src/service.spec.ts`
     - Verification: `npm run test -- src/service.spec.ts`
     - Commit: `feat: coordinate shared daemon startup`
 
-  - [ ] Step 5.3: Add protocol-version negotiation and safe daemon replacement
+  - [x] Step 5.3: Add protocol-version negotiation and safe daemon replacement
     - Objective: Support projects using different plugin versions concurrently. Reject incompatible clients clearly, restart an incompatible daemon only when it has no live owners, and never interrupt active routes merely to upgrade the daemon.
     - Files: `src/service.ts`, `src/service-version.spec.ts`, `src/control-protocol.ts`
     - Test file: `src/service-version.spec.ts`
     - Verification: `npm run test -- src/service-version.spec.ts`
     - Commit: `feat: negotiate shared daemon versions`
 
-  - [ ] Step 5.4: Add the minimal CLI required for trust, certificates, health, service, and cleanup
+  - [x] Step 5.4: Add the minimal CLI required for trust, certificates, health, service, and cleanup
     - Objective: Ship a `vite-local-tls` binary with `trust`, `untrust`, `cert import`, `cert list`, `cert remove`, `doctor`, `proxy start`, `proxy stop`, `proxy status`, `service install`, `service uninstall`, and `clean`. Keep it focused on infrastructure; do not turn it into a general command runner like Portless.
     - Files: `src/cli.ts`, `src/cli.spec.ts`, `package.json`
     - Test file: `src/cli.spec.ts`
     - Verification: `npm run test -- src/cli.spec.ts`
     - Commit: `feat: add local TLS infrastructure CLI`
 
-  - [ ] Step 5.5: Install least-privilege startup services for port 443
+  - [x] Step 5.5: Install least-privilege startup services for port 443
     - Objective: Generate and manage launchd, systemd, and Windows Task Scheduler definitions. Prefer running as the installing user with only the privilege needed to bind 443; where a root bootstrap is unavoidable, bind first and drop privileges before accepting control messages. Preserve exact state ownership and never alter unrelated services.
     - Files: `src/service-install.ts`, `src/service-install-macos.spec.ts`, `src/service-install-linux.spec.ts`, `src/service-install-windows.spec.ts`, `src/interfaces/service-state.ts`
     - Test files: `src/service-install-macos.spec.ts`, `src/service-install-linux.spec.ts`, `src/service-install-windows.spec.ts`
     - Verification: `npm run test -- src/service-install-macos.spec.ts src/service-install-linux.spec.ts src/service-install-windows.spec.ts`
     - Commit: `feat: install least-privilege proxy service`
 
-  - [ ] Step 5.6: Auto-start the daemon with clear interactive and non-interactive behavior
+  - [x] Step 5.6: Auto-start the daemon with clear interactive and non-interactive behavior
     - Objective: Match the current zero-setup startup as closely as platform security permits. Start directly when port 443 is available, perform a bounded first-run trust/elevation flow only in an interactive terminal, and fail early with the exact `vite-local-tls service install` or `trust` command in CI/non-interactive contexts.
     - Files: `src/service.ts`, `src/service-autostart.spec.ts`, `src/cli.ts`
     - Test file: `src/service-autostart.spec.ts`

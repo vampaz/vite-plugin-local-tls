@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { StatePaths } from './interfaces/state-paths.js';
 
-function sanitizeNamespace(namespace: string): string {
+export function sanitizeNamespace(namespace: string): string {
   const sanitized = namespace
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '-')

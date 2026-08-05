@@ -3,6 +3,7 @@ import { chmod, lstat, mkdir, unlink } from 'node:fs/promises';
 import { createConnection, createServer, type Server, type Socket } from 'node:net';
 import path from 'node:path';
 import {
+  CONTROL_PROTOCOL_VERSION,
   ControlProtocolError,
   createControlError,
   encodeControlMessage,
@@ -159,10 +160,13 @@ export class ControlServer {
         continue;
       }
       state.queue = state.queue.then(async () => {
+        let requestId: string | undefined;
         try {
-          await this.#processMessage(socket, state, parseControlFrame(frame));
+          const message = parseControlFrame(frame);
+          requestId = message.requestId;
+          await this.#processMessage(socket, state, message);
         } catch (error) {
-          writeMessage(socket, createControlError(error));
+          writeMessage(socket, createControlError(error, requestId));
         }
       });
     }
@@ -174,6 +178,29 @@ export class ControlServer {
     message: ClientControlMessage,
   ): Promise<void> {
     const registry = this.#options.registry;
+    if (message.type === 'negotiate') {
+      writeMessage(socket, {
+        version: 0,
+        type: 'negotiated',
+        requestId: message.requestId,
+        protocolVersion: CONTROL_PROTOCOL_VERSION,
+        activeRoutes: registry.size,
+      });
+      return;
+    }
+    if (message.type === 'stop-if-idle') {
+      if (registry.size > 0) {
+        throw new ControlProtocolError(
+          'ROUTES_ACTIVE',
+          'Refusing to stop the local TLS daemon while routes are active.',
+        );
+      }
+      socket.write(
+        encodeControlMessage({ version: 0, type: 'stopping', requestId: message.requestId }),
+        () => setImmediate(() => this.#options.onStopRequested?.()),
+      );
+      return;
+    }
     if (message.type === 'health') {
       writeMessage(socket, {
         version: 1,
@@ -184,6 +211,7 @@ export class ControlServer {
       return;
     }
     if (message.type === 'register') {
+      await this.#options.validateRoutes?.(message.routes);
       registry.registerMany(message.routes, state.id);
       for (const { ownerToken } of message.routes) {
         state.ownerTokens.add(ownerToken);

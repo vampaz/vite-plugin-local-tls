@@ -1,5 +1,32 @@
 import type { RouteRegistration } from './route-registration.js';
 
+export interface NegotiateControlMessage {
+  version: 0;
+  type: 'negotiate';
+  requestId: string;
+  protocolVersion: number;
+}
+
+export interface StopIfIdleControlMessage {
+  version: 0;
+  type: 'stop-if-idle';
+  requestId: string;
+}
+
+export interface NegotiatedControlMessage {
+  version: 0;
+  type: 'negotiated';
+  requestId: string;
+  protocolVersion: number;
+  activeRoutes: number;
+}
+
+export interface StoppingControlMessage {
+  version: 0;
+  type: 'stopping';
+  requestId: string;
+}
+
 export interface RegisterControlMessage {
   version: 1;
   type: 'register';
@@ -52,7 +79,7 @@ export interface RouteLostControlMessage {
 }
 
 export interface ErrorControlMessage {
-  version: 1;
+  version: 0 | 1;
   type: 'error';
   requestId?: string;
   code: string;
@@ -60,12 +87,16 @@ export interface ErrorControlMessage {
 }
 
 export type ClientControlMessage =
+  | NegotiateControlMessage
+  | StopIfIdleControlMessage
   | RegisterControlMessage
   | UnregisterControlMessage
   | HeartbeatControlMessage
   | HealthControlMessage;
 
 export type ServerControlMessage =
+  | NegotiatedControlMessage
+  | StoppingControlMessage
   | AcknowledgementControlMessage
   | HealthResponseControlMessage
   | RouteLostControlMessage

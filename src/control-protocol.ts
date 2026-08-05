@@ -162,9 +162,32 @@ export function parseClientControlMessage(value: unknown): ClientControlMessage 
   if (!isRecord(value)) {
     throw new ControlProtocolError('INVALID_MESSAGE', 'Control message must be an object.');
   }
-  validateVersion(value);
   const requestId = validateRequestId(value.requestId);
   const type = requireString(value, 'type');
+
+  if (value.version === 0 && type === 'negotiate') {
+    if (
+      typeof value.protocolVersion !== 'number' ||
+      !Number.isInteger(value.protocolVersion) ||
+      value.protocolVersion < 1
+    ) {
+      throw new ControlProtocolError(
+        'INVALID_MESSAGE',
+        '`protocolVersion` must be a positive integer.',
+      );
+    }
+    return {
+      version: 0,
+      type,
+      requestId,
+      protocolVersion: value.protocolVersion,
+    };
+  }
+  if (value.version === 0 && type === 'stop-if-idle') {
+    return { version: 0, type, requestId };
+  }
+
+  validateVersion(value);
 
   if (type === 'health') {
     return { version: 1, type, requestId };

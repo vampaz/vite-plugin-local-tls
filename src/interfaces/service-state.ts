@@ -5,4 +5,6 @@ export interface ServiceState {
   socketPath: string;
   startedAt: string;
   protocolVersion: number;
+  port: number;
+  caFingerprint: string;
 }
