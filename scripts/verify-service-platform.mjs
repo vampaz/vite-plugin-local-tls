@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { connect } from 'node:tls';
 import { fileURLToPath } from 'node:url';
@@ -33,6 +33,64 @@ function runCli(arguments_) {
   });
 }
 
+function capture(command, arguments_) {
+  return new Promise((resolve) => {
+    const child = spawn(command, arguments_, {
+      cwd: repositoryRoot,
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const output = [];
+    const errors = [];
+    child.stdout.on('data', (chunk) => output.push(Buffer.from(chunk)));
+    child.stderr.on('data', (chunk) => errors.push(Buffer.from(chunk)));
+    child.once('error', (error) => resolve(String(error)));
+    child.once('exit', (code) => {
+      resolve(
+        `${command} ${arguments_.join(' ')} exited ${String(code)}:\n${Buffer.concat(output).toString()}${Buffer.concat(errors).toString()}`,
+      );
+    });
+  });
+}
+
+async function serviceDiagnostics() {
+  if (process.platform === 'linux') {
+    return Promise.all([
+      capture('sudo', [
+        '--',
+        'systemctl',
+        'status',
+        '--no-pager',
+        `vite-local-tls-${namespace}.service`,
+      ]),
+      capture('sudo', [
+        '--',
+        'journalctl',
+        '--no-pager',
+        '-n',
+        '100',
+        '-u',
+        `vite-local-tls-${namespace}.service`,
+      ]),
+    ]);
+  }
+  if (process.platform === 'darwin') {
+    const paths = getStatePaths(namespace);
+    const [launchctl, stdout, stderr] = await Promise.all([
+      capture('sudo', [
+        '--',
+        'launchctl',
+        'print',
+        `system/com.vampaz.vite-local-tls.${namespace}`,
+      ]),
+      readFile(path.join(paths.stateDirectory, 'service.log'), 'utf8').catch(String),
+      readFile(path.join(paths.stateDirectory, 'service-error.log'), 'utf8').catch(String),
+    ]);
+    return [launchctl, `service.log:\n${stdout}`, `service-error.log:\n${stderr}`];
+  }
+  return [await capture('schtasks.exe', ['/Query', '/TN', `Vite Local TLS\\${namespace}`, '/V'])];
+}
+
 function parseStatus(output) {
   const status = JSON.parse(output);
   if (!status || typeof status !== 'object') {
@@ -54,7 +112,10 @@ async function waitForRunningService() {
     }
     await delay(500);
   }
-  throw new Error(`Installed service did not become ready: ${JSON.stringify(lastStatus)}`);
+  const diagnostics = await serviceDiagnostics();
+  throw new Error(
+    `Installed service did not become ready: ${JSON.stringify(lastStatus)}\n${diagnostics.join('\n')}`,
+  );
 }
 
 function verifyTlsListener() {
