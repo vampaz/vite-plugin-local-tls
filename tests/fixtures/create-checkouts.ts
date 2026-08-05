@@ -6,6 +6,7 @@ import type { E2eContext } from './server-process.js';
 export interface CheckoutFixtures {
   primary: string;
   clone: string;
+  secondClone: string;
   worktree: string;
 }
 
@@ -38,6 +39,7 @@ export async function createCheckouts(context: E2eContext): Promise<CheckoutFixt
   const root = await mkdtemp(path.join(context.root, 'checkouts-'));
   const primary = path.join(root, 'seed', 'project');
   const clone = path.join(root, 'clone', 'project');
+  const secondClone = path.join(root, 'clone-api', 'project');
   const worktree = path.join(root, 'worktrees', 'review');
   await mkdir(path.dirname(primary), { recursive: true });
   await cp(context.fixtureDirectory, primary, {
@@ -55,12 +57,16 @@ export async function createCheckouts(context: E2eContext): Promise<CheckoutFixt
   await mkdir(path.dirname(clone), { recursive: true });
   await runGit(path.dirname(clone), ['clone', primary, clone]);
   await runGit(clone, ['checkout', '-b', 'feature/editor']);
+  await mkdir(path.dirname(secondClone), { recursive: true });
+  await runGit(path.dirname(secondClone), ['clone', primary, secondClone]);
+  await runGit(secondClone, ['checkout', '-b', 'feature/api']);
   await mkdir(path.dirname(worktree), { recursive: true });
   await runGit(primary, ['worktree', 'add', '-b', 'review', worktree]);
   await Promise.all([
     linkDependencies(context, primary),
     linkDependencies(context, clone),
+    linkDependencies(context, secondClone),
     linkDependencies(context, worktree),
   ]);
-  return { primary, clone, worktree };
+  return { primary, clone, secondClone, worktree };
 }

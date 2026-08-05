@@ -559,35 +559,35 @@ Every source test remains adjacent to its source file. Cross-package contract an
 
 - [ ] Phase 9: Reproduce the existing Changesets and trusted-publishing flow
 
-  - [ ] Step 9.1: Mirror the current release metadata, Changesets policy, changelog, and package hooks
+  - [x] Step 9.1: Mirror the current release metadata, Changesets policy, changelog, and package hooks
     - Objective: Configure Changesets with `master`, public access, the standard Changesets changelog, `commit: false`, no fixed or linked groups, patch updates for internal dependencies, and no ignored packages. Add the current `changeset`, `changeset:version`, and `changeset:publish` scripts; public package metadata; `files`, ESM exports and types; `prepublishOnly`; packaged README behavior; changelog; and the existing Husky pre-commit format/lint/restage behavior. Change only package/repository identity and Caddy-specific descriptions.
     - Files: `.changeset/config.json`, `.husky/pre-commit`, `package.json`, `package-lock.json`, `CHANGELOG.md`, `CONTRIBUTING.md`, `README.md`, `tests/release/release-metadata.spec.ts`
     - Test file: `tests/release/release-metadata.spec.ts`
     - Verification: `npm run test -- tests/release/release-metadata.spec.ts && npm run changeset -- status`
     - Commit: `chore: configure changesets release metadata`
 
-  - [ ] Step 9.2: Recreate the pull-request and master test gates
+  - [x] Step 9.2: Recreate the pull-request and master test gates
     - Objective: Add the `Tests` workflow for pull requests and pushes targeting `master`, with `cancel-in-progress: true`, the same workflow/ref concurrency key, and separate unit/package plus reusable E2E jobs. Mirror `actions/checkout@v4`, `actions/setup-node@v4`, `actions/cache@v4`, GitHub-hosted Ubuntu, Node 24, npm lockfile caching, `npm ci`, lint, format check, unit tests, and the package build. Adapt only the E2E prerequisites: no Caddy installation; provide OpenSSL, permission to bind the isolated test listener, and a disposable CA/browser trust setup, then run the complete caddyless E2E suite.
     - Files: `.github/workflows/tests.yml`, `.github/workflows/e2e.yml`, `tests/release/tests-workflow.spec.ts`, `tests/e2e/package.json`, `package.json`
     - Test file: `tests/release/tests-workflow.spec.ts`
     - Verification: `npm run test -- tests/release/tests-workflow.spec.ts && npm run verify:workflows`
     - Commit: `ci: gate pull requests and master releases`
 
-  - [ ] Step 9.3: Recreate the successful-tests-only release workflow
+  - [x] Step 9.3: Recreate the successful-tests-only release workflow
     - Objective: Mirror the current `workflow_run` trigger for completed `Tests` runs on `master`, success conclusion guard, `cancel-in-progress: true`, the workflow/ref concurrency key, exact `head_sha` checkout through `actions/checkout@v4`, Node 24 through `actions/setup-node@v4`, latest npm upgrade for OIDC support, `npm ci`, npm registry configuration, and `changesets/action@v1` with `publish: npm run changeset:publish`. Preserve `GITHUB_TOKEN`, `NPM_CONFIG_PROVENANCE: true`, and `contents`, `pull-requests`, and `id-token` write permissions. Add regression fixtures proving failed/cancelled tests, PR-only test runs, stale SHAs, and duplicate release runs cannot publish.
     - Files: `.github/workflows/release.yml`, `tests/release/release-workflow.spec.ts`, `tests/fixtures/workflow-events/`
     - Test file: `tests/release/release-workflow.spec.ts`
     - Verification: `npm run test -- tests/release/release-workflow.spec.ts && npm run verify:workflows`
     - Commit: `ci: publish through changesets and npm OIDC`
 
-  - [ ] Step 9.4: Document the identical contributor and release-PR lifecycle
+  - [x] Step 9.4: Document the identical contributor and release-PR lifecycle
     - Objective: Document when a Changeset is required, semantic bump selection, local status checks, the `Version Packages` pull request, the second test run after merging it, automatic tag/GitHub Release/npm publication, rollback policy, and the prohibition on manual tags or local publishes after bootstrap. Include the required GitHub setting that allows Actions to create pull requests.
     - Files: `CONTRIBUTING.md`, `README.md`, `RELEASING.md`, `tests/release/release-docs.spec.ts`
     - Test file: `tests/release/release-docs.spec.ts`
     - Verification: `npm run test -- tests/release/release-docs.spec.ts`
     - Commit: `docs: document changesets publishing flow`
 
-  - [ ] Step 9.5: Add dry-run and post-publication verification without publishing
+  - [x] Step 9.5: Add dry-run and post-publication verification without publishing
     - Objective: Build and pack the exact artifact, reject unexpected files or runtime dependencies, install it into a clean Vite fixture, and add a registry verifier for version, `latest`, `gitHead`, provenance attestations, tag, and GitHub Release. The dry run must be safe before credentials exist and must never call `npm publish`.
     - Files: `scripts/verify-release-dry-run.mjs`, `scripts/verify-published-release.mjs`, `tests/release/release-artifact.spec.ts`, `package.json`
     - Test file: `tests/release/release-artifact.spec.ts`
@@ -603,27 +603,27 @@ Every source test remains adjacent to its source file. Cross-package contract an
 
 ## Release acceptance checklist
 
-- [ ] Every row in the functional parity ledger links to passing unit or E2E evidence.
-- [ ] At least four simultaneous Vite servers run on independent HTTPS branch URLs.
-- [ ] Independent clones and linked worktrees both work.
-- [ ] The same branch can run twice with distinct `instanceLabel` values.
-- [ ] Latest-started takeover cannot be undone by old-owner cleanup.
-- [ ] Multi-domain sibling routes survive partial takeover and shutdown.
-- [ ] HTTP/1.1, HTTP/2, Vite HMR, application WebSockets, streaming, preview, and auto-port selection pass.
+- [x] Every row in the functional parity ledger links to passing unit or E2E evidence.
+- [x] At least four simultaneous Vite servers run on independent HTTPS branch URLs.
+- [x] Independent clones and linked worktrees both work.
+- [x] The same branch can run twice with distinct `instanceLabel` values.
+- [x] Latest-started takeover cannot be undone by old-owner cleanup.
+- [x] Multi-domain sibling routes survive partial takeover and shutdown.
+- [x] HTTP/1.1, HTTP/2, Vite HMR, application WebSockets, streaming, preview, and auto-port selection pass.
 - [ ] macOS, Linux, WSL, and Windows trust/service adapters have unit coverage and live platform evidence before claiming support.
-- [ ] The proxy binds only to IPv4 and IPv6 loopback addresses.
-- [ ] The CA key is never world-readable and unknown SNI names are not issued certificates.
-- [ ] The installed package has no runtime npm dependencies and no Portless, Caddy, or mkcert runtime requirement.
-- [ ] Missing OpenSSL, Git, trust tooling, port privileges, and port conflicts produce precise errors without silent fallback.
-- [ ] `internalTls` true, false, and omitted pass the frozen local, loopback, and custom-domain certificate-policy matrix; imported keys and certificates are exact-host validated and private.
-- [ ] The packed package installs in a clean Vite fixture and exposes valid ESM, types, plugin, and CLI entry points.
+- [x] The proxy binds only to IPv4 and IPv6 loopback addresses.
+- [x] The CA key is never world-readable and unknown SNI names are not issued certificates.
+- [x] The installed package has no runtime npm dependencies and no Portless, Caddy, or mkcert runtime requirement.
+- [x] Missing OpenSSL, Git, trust tooling, port privileges, and port conflicts produce precise errors without silent fallback.
+- [x] `internalTls` true, false, and omitted pass the frozen local, loopback, and custom-domain certificate-policy matrix; imported keys and certificates are exact-host validated and private.
+- [x] The packed package installs in a clean Vite fixture and exposes valid ESM, types, plugin, and CLI entry points.
 - [ ] Every publishable change requires a Changeset and the `Version Packages` pull request is generated through the same Changesets action flow.
-- [ ] Pull requests and `master` run the same Tests gate; release checks out the exact successful Tests `head_sha` and cannot run after a failed, cancelled, or stale result.
+- [x] Pull requests and `master` run the same Tests gate; release checks out the exact successful Tests `head_sha` and cannot run after a failed, cancelled, or stale result.
 - [ ] npm publication uses the configured `release.yml` trusted publisher, no long-lived publish token, and produces provenance whose `gitHead` matches the tested commit.
 - [ ] The npm version and `latest` dist-tag, `@vampaz/vite-plugin-local-tls@<version>` Git tag, GitHub Release, changelog, and installed tarball all agree.
 - [ ] The one-time `0.0.1` bootstrap credential is revoked before the normal Changesets-driven `1.0.0` release, and token publishing is disabled afterward.
 - [ ] The user confirms the npm trusted publisher names the exact GitHub owner, repository, and `release.yml`, allows `npm publish`, and has no accidental environment mismatch.
-- [ ] The existing Caddy plugin repository remains untouched until the user explicitly approves migration or deprecation work.
+- [x] The existing Caddy plugin repository remains untouched until the user explicitly approves migration or deprecation work.
 - [ ] The user confirms the new plugin is complete before any release, commit, push, or deprecation action.
 
 ## References used to shape the plan

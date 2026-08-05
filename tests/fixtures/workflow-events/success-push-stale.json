@@ -1,0 +1,11 @@
+{
+  "repository": "vampaz/vite-plugin-local-tls",
+  "remoteMasterSha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "workflowRun": {
+    "conclusion": "success",
+    "event": "push",
+    "headBranch": "master",
+    "headRepository": "vampaz/vite-plugin-local-tls",
+    "headSha": "ffffffffffffffffffffffffffffffffffffffff"
+  }
+}

@@ -148,6 +148,10 @@ npm uninstall @vampaz/vite-plugin-local-tls
 
 Migrating from the Caddy plugin? Read [MIGRATION.md](./MIGRATION.md). Security boundaries and reporting instructions are in [SECURITY.md](./SECURITY.md).
 
+## Contributing and releases
+
+Development setup and Changeset requirements are in [CONTRIBUTING.md](./CONTRIBUTING.md). The tested `Version Packages` pull request, npm OIDC publication, provenance, and one-time bootstrap process are documented in [RELEASING.md](./RELEASING.md).
+
 ## Development
 
 ```bash

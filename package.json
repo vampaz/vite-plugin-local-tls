@@ -24,8 +24,11 @@
     "vite-local-tls": "./dist/cli.js"
   },
   "files": [
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
     "dist",
     "MIGRATION.md",
+    "RELEASING.md",
     "SECURITY.md"
   ],
   "type": "module",
@@ -46,6 +49,11 @@
   },
   "scripts": {
     "build": "tsup && tsc -p tsconfig.build.json",
+    "changeset": "changeset",
+    "changeset:version": "changeset version",
+    "changeset:publish": "changeset publish",
+    "check": "npm run lint && npm run format:check",
+    "check:fix": "npm run format && npm run lint",
     "lint": "oxlint .",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
@@ -54,14 +62,20 @@
     "test:e2e:matrix": "bash tests/e2e/run-vite-matrix.sh",
     "verify:zero-deps": "npm run build && node scripts/verify-zero-runtime-dependencies.mjs",
     "verify:package": "npm run build && node scripts/verify-package.mjs",
+    "verify:published": "node scripts/verify-published-release.mjs",
+    "verify:release-dry-run": "node scripts/verify-release-dry-run.mjs",
+    "verify:workflows": "node scripts/verify-workflows.mjs",
     "playwright:install": "playwright install chromium",
+    "prepublishOnly": "npm run build",
+    "prepare": "husky",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {},
   "devDependencies": {
+    "@changesets/cli": "^2.31.1",
     "@playwright/test": "^1.62.1",
     "@types/node": "^26.1.2",
+    "husky": "^9.1.7",
     "oxfmt": "^0.62.0",
     "oxlint": "^1.77.0",
     "tsup": "^8.5.1",
@@ -72,7 +86,8 @@
     "vite5": "npm:vite@5.4.21",
     "vite6": "npm:vite@6.4.3",
     "vite7": "npm:vite@7.3.6",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "yaml": "^2.9.0"
   },
   "peerDependencies": {
     "vite": "^3.0.0 || ^4.0.0 || ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0"

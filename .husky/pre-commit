@@ -1,0 +1,21 @@
+#!/usr/bin/env sh
+set -eu
+
+staged_file_list="$(mktemp)"
+git diff --cached --name-only --diff-filter=ACMR > "$staged_file_list"
+
+if [ ! -s "$staged_file_list" ]; then
+  rm -f "$staged_file_list"
+  exit 0
+fi
+
+npm run format
+npm run lint
+
+while IFS= read -r file_path; do
+  if [ -n "$file_path" ] && [ -f "$file_path" ]; then
+    git add -- "$file_path"
+  fi
+done < "$staged_file_list"
+
+rm -f "$staged_file_list"

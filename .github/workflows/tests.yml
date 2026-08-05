@@ -1,0 +1,40 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set Node version to 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - run: npm ci
+
+      - name: Run lint and format checks
+        run: npm run check
+
+      - name: Run unit, contract, and package tests
+        run: npm run test
+
+      - name: Build package
+        run: npm run build
+
+  e2e:
+    uses: ./.github/workflows/e2e.yml

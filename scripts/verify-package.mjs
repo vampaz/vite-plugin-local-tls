@@ -147,9 +147,12 @@ async function verifyPackage() {
     requireValue(record?.filename, 'npm pack did not return a tarball filename.');
     const paths = new Set((record.files ?? []).map(({ path: filePath }) => filePath));
     for (const requiredPath of [
+      'CHANGELOG.md',
+      'CONTRIBUTING.md',
       'LICENSE',
       'MIGRATION.md',
       'README.md',
+      'RELEASING.md',
       'SECURITY.md',
       'dist/cli.d.ts',
       'dist/cli.js',

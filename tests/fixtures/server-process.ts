@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -129,7 +129,9 @@ async function installPackedPlayground(root: string): Promise<string> {
 }
 
 export async function prepareE2eContext(): Promise<E2eContext> {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'vite-local-tls-e2e-'));
+  const parentDirectory = process.env.VITE_LOCAL_TLS_E2E_PARENT ?? os.tmpdir();
+  await mkdir(parentDirectory, { recursive: true });
+  const root = await mkdtemp(path.join(parentDirectory, 'vite-local-tls-e2e-'));
   const stateHome = path.join(root, 'home');
   const namespace = path.basename(root).slice(-6);
   const proxyPort = await findAvailablePort();

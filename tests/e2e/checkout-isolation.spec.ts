@@ -7,7 +7,12 @@ test('isolates regular clones and linked worktrees by Git-derived URL and HMR or
   e2e,
 }) => {
   const checkouts = await createCheckouts(e2e);
-  const ports = await Promise.all([findAvailablePort(), findAvailablePort(), findAvailablePort()]);
+  const ports = await Promise.all([
+    findAvailablePort(),
+    findAvailablePort(),
+    findAvailablePort(),
+    findAvailablePort(),
+  ]);
   const fixtures = [
     {
       cwd: checkouts.primary,
@@ -24,11 +29,18 @@ test('isolates regular clones and linked worktrees by Git-derived URL and HMR or
       port: ports[1]!,
     },
     {
+      cwd: checkouts.secondClone,
+      domain: 'project.feature-api.localhost',
+      marker: 'second-independent-clone',
+      branch: 'feature/api',
+      port: ports[2]!,
+    },
+    {
       cwd: checkouts.worktree,
       domain: 'project.review.localhost',
       marker: 'linked-worktree',
       branch: 'review',
-      port: ports[2]!,
+      port: ports[3]!,
     },
   ];
   await Promise.all(

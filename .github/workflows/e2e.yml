@@ -1,0 +1,47 @@
+name: E2E
+
+on:
+  workflow_call:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set Node version to 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - run: npm ci
+
+      - name: Install TLS and browser prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcap2-bin libnss3-tools openssl
+          sudo setcap cap_net_bind_service=+ep "$(readlink -f "$(command -v node)")"
+
+      - name: Prepare disposable TLS state
+        run: |
+          mkdir -p "$RUNNER_TEMP/vite-local-tls-e2e"
+          echo "VITE_LOCAL_TLS_E2E_PARENT=$RUNNER_TEMP/vite-local-tls-e2e" >> "$GITHUB_ENV"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Install Playwright Chromium
+        run: npm run playwright:install -- --with-deps
+
+      - name: Run complete end-to-end suite
+        run: npm run test:e2e
+
+      - name: Run supported Vite matrix
+        run: npm run test:e2e:matrix
