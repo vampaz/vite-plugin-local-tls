@@ -50,7 +50,7 @@ function parseJsonOutput(output) {
   return Array.isArray(parsed) ? parsed.at(-1) : parsed;
 }
 
-function resolveTagCommit(output) {
+function resolveTagCommit(output, tag) {
   const references = new Map(
     output
       .trim()
@@ -61,8 +61,7 @@ function resolveTagCommit(output) {
         return [reference, sha];
       }),
   );
-  const peeled = [...references].find(([reference]) => reference.endsWith('^{}'))?.[1];
-  return peeled ?? [...references.values()][0];
+  return references.get(`refs/tags/${tag}^{}`) ?? references.get(`refs/tags/${tag}`);
 }
 
 async function verifyConsumerInstall(specifier, packageName, version) {
@@ -78,7 +77,7 @@ async function verifyConsumerInstall(specifier, packageName, version) {
           type: 'module',
           dependencies: {
             '@types/node': '26.1.2',
-            [packageName]: specifier,
+            [packageName]: version,
             vite: '8.2.0',
           },
         },
@@ -172,18 +171,17 @@ const commits =
   ) ?? [];
 requireValue(commits.includes(gitHead), 'Provenance does not resolve to npm gitHead.');
 
-const tag = `${packageName}@${version}`;
+const tagCandidates = [`v${version}`, `${packageName}@${version}`];
 const remoteTags = await run('git', [
   'ls-remote',
   '--tags',
   repositoryUrl,
-  `refs/tags/${tag}`,
-  `refs/tags/${tag}^{}`,
+  ...tagCandidates.flatMap((tag) => [`refs/tags/${tag}`, `refs/tags/${tag}^{}`]),
 ]);
-requireValue(
-  resolveTagCommit(remoteTags.stdout) === gitHead,
-  'Git tag does not match npm gitHead.',
+const tag = tagCandidates.find(
+  (candidate) => resolveTagCommit(remoteTags.stdout, candidate) === gitHead,
 );
+requireValue(tag, 'No supported Git tag matches npm gitHead.');
 
 const release = parseJsonOutput(
   (
