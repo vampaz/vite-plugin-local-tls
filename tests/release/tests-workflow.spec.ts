@@ -57,9 +57,16 @@ describe('Tests workflow', () => {
     expect(source).toContain('actions/setup-node@v7');
     expect(commands).toEqual([
       'npm ci',
+      'npm run test -- src/service-install-macos.spec.ts',
       'npm run build',
       'node scripts/verify-service-platform.mjs',
     ]);
+    expect(
+      job.steps.find(
+        (step: Record<string, string>) =>
+          step.run === 'npm run test -- src/service-install-macos.spec.ts',
+      )?.if,
+    ).toBe("runner.os == 'macOS'");
   });
 });
 

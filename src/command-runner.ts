@@ -14,18 +14,6 @@ function hasInteractiveTerminal(): boolean {
   return Boolean(process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY);
 }
 
-function interactiveInvocation(
-  command: string,
-  arguments_: string[],
-): { command: string; arguments_: string[] } {
-  return process.platform === 'darwin'
-    ? {
-        command: '/usr/bin/script',
-        arguments_: ['-q', '/dev/null', command, ...arguments_],
-      }
-    : { command, arguments_ };
-}
-
 function runCapturedCommand(
   command: string,
   arguments_: string[],
@@ -63,8 +51,7 @@ function runInteractiveCommand(
     );
   }
   return new Promise(function runInteractiveCommandPromise(resolve, reject) {
-    const invocation = interactiveInvocation(command, arguments_);
-    const child = spawn(invocation.command, invocation.arguments_, {
+    const child = spawn(command, arguments_, {
       stdio: 'inherit',
       timeout: options.timeoutMs,
     });

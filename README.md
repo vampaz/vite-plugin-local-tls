@@ -26,7 +26,7 @@ export default defineConfig({
 });
 ```
 
-Start Vite normally. The plugin derives `<repo>.<branch>.localhost`, starts or reuses one per-user loopback TLS service, registers Vite's actual bound port, and prints the public URL and upstream target. The first interactive run can ask the OS to trust the package's local CA and, when required, install the startup service that can bind port 443.
+Start Vite normally. The plugin derives `<repo>.<branch>.localhost`, starts or reuses one per-user loopback TLS service, registers Vite's actual bound port, and prints the public URL and upstream target. The first interactive run can ask the OS to trust the package's local CA and, when required, install the startup service that can bind port 443. On macOS, service installation uses a native administrator dialog with a Vite Local TLS explanation; it should appear once per installation or update. Simultaneous Vite starts wait for that authorization instead of opening additional password dialogs.
 
 The same configuration works with Vite preview. Run your normal build command, then `vite preview`; the plugin's `configurePreviewServer` integration registers the preview server after it has selected a port.
 
@@ -134,6 +134,7 @@ localTls({ loopbackDomain: 'localtest.me' });
 Run `npm exec -- vite-local-tls doctor` to inspect OpenSSL, the platform trust tool, CA state, service compatibility, and active-route count.
 
 - Missing OpenSSL or trust tooling fails startup explicitly; the plugin never downgrades to HTTP.
+- Administrator authorization has no wall-clock deadline. If another Vite process is already showing the OS dialog, later starts print that they are waiting for it.
 - If port 443 has an unrelated listener, the plugin reports the conflict and leaves that process untouched.
 - If a hostname opens the newest matching Vite process, add `instanceLabel` or an explicit `domain`.
 - If custom-certificate startup fails, verify the certificate/key pair and exact hostname SAN, then run `vite-local-tls cert import` again.

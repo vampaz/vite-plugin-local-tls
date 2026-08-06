@@ -19,6 +19,8 @@ type ServiceProbe =
   | { status: 'missing' }
   | { status: 'unrelated'; reason: string };
 
+const INSTALLED_SERVICE_START_TIMEOUT_MS = 30_000;
+
 export class ServiceCoordinationError extends Error {
   readonly code: string;
 
@@ -253,33 +255,6 @@ function errorHasCode(error: unknown, codes: Set<string>): boolean {
   return false;
 }
 
-function boundedOperation(
-  operation: Promise<void>,
-  timeoutMs: number,
-  description: string,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(
-      reject,
-      timeoutMs,
-      new ServiceCoordinationError(
-        'AUTHORIZATION_TIMEOUT',
-        `${description} did not complete within ${timeoutMs}ms.`,
-      ),
-    );
-    operation.then(
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      (error: unknown) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
-
 export class LocalTlsService {
   readonly #options: Required<
     Pick<ServiceOptions, 'startupTimeoutMs' | 'probeTimeoutMs' | 'retryDelayMs' | 'staleLockMs'>
@@ -350,7 +325,6 @@ export class LocalTlsService {
       Boolean(
         process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY && !process.env.CI,
       );
-    const authorizationTimeoutMs = options.authorizationTimeoutMs ?? 30_000;
     if (!(await options.isTrusted())) {
       if (!interactive) {
         throw new ServiceCoordinationError(
@@ -358,38 +332,41 @@ export class LocalTlsService {
           'The local certificate authority is not trusted. Run `vite-local-tls trust` in an interactive terminal.',
         );
       }
-      await boundedOperation(
-        options.trust(),
-        authorizationTimeoutMs,
-        'Local certificate-authority trust',
-      );
-      if (!(await options.isTrusted())) {
-        throw new ServiceCoordinationError(
-          'TRUST_FAILED',
-          'The local certificate authority is still untrusted after `vite-local-tls trust`.',
-        );
-      }
+      await this.#withAuthorizationLock(async () => {
+        if (await options.isTrusted()) {
+          return;
+        }
+        await options.trust();
+        if (!(await options.isTrusted())) {
+          throw new ServiceCoordinationError(
+            'TRUST_FAILED',
+            'The local certificate authority is still untrusted after `vite-local-tls trust`.',
+          );
+        }
+      }, options.onAuthorizationWait);
     }
-    if (options.isServiceCurrent && !(await options.isServiceCurrent())) {
+    const isServiceCurrent = options.isServiceCurrent;
+    if (isServiceCurrent && !(await isServiceCurrent())) {
       if (!interactive) {
         throw new ServiceCoordinationError(
           'SERVICE_UPDATE_REQUIRED',
           'The installed local TLS service is outdated. Run `vite-local-tls service install` in an interactive terminal.',
         );
       }
-      const status = await this.status();
-      if (status.running && status.activeRoutes > 0) {
-        throw new ServiceCoordinationError(
-          'SERVICE_UPDATE_ROUTES_ACTIVE',
-          `The installed local TLS service is outdated, but ${status.activeRoutes} route(s) are active. Stop those Vite processes and start this project again.`,
-        );
-      }
-      await boundedOperation(
-        options.installService(),
-        authorizationTimeoutMs,
-        'Local TLS service update',
-      );
-      return this.#waitForInstalledService(authorizationTimeoutMs);
+      return this.#withAuthorizationLock(async () => {
+        if (await isServiceCurrent()) {
+          return this.ensureRunning();
+        }
+        const status = await this.status();
+        if (status.running && status.activeRoutes > 0) {
+          throw new ServiceCoordinationError(
+            'SERVICE_UPDATE_ROUTES_ACTIVE',
+            `The installed local TLS service is outdated, but ${status.activeRoutes} route(s) are active. Stop those Vite processes and start this project again.`,
+          );
+        }
+        await options.installService();
+        return this.#waitForInstalledService(INSTALLED_SERVICE_START_TIMEOUT_MS);
+      }, options.onAuthorizationWait);
     }
     try {
       return await this.ensureRunning();
@@ -403,12 +380,17 @@ export class LocalTlsService {
           'Port 443 requires the startup service. Run `vite-local-tls service install` in an interactive terminal.',
         );
       }
-      await boundedOperation(
-        options.installService(),
-        authorizationTimeoutMs,
-        'Local TLS service installation',
-      );
-      return this.#waitForInstalledService(authorizationTimeoutMs);
+      return this.#withAuthorizationLock(async () => {
+        try {
+          return await this.ensureRunning();
+        } catch (coordinatedError) {
+          if (!errorHasCode(coordinatedError, new Set(['EACCES', 'EPERM']))) {
+            throw coordinatedError;
+          }
+        }
+        await options.installService();
+        return this.#waitForInstalledService(INSTALLED_SERVICE_START_TIMEOUT_MS);
+      }, options.onAuthorizationWait);
     }
   }
 
@@ -551,10 +533,33 @@ export class LocalTlsService {
     );
   }
 
-  async #tryAcquireLock(): Promise<(() => Promise<void>) | null> {
+  async #withAuthorizationLock<T>(operation: () => Promise<T>, onWait?: () => void): Promise<T> {
+    await ensureStatePaths(this.#options.paths);
+    const lockPath = `${this.#options.paths.lockPath}.authorization`;
+    let waitingReported = false;
+    while (true) {
+      const release = await this.#tryAcquireLock(lockPath);
+      if (release) {
+        try {
+          return await operation();
+        } finally {
+          await release();
+        }
+      }
+      if (!waitingReported) {
+        waitingReported = true;
+        onWait?.();
+      }
+      await this.#clearStaleLock(lockPath);
+      await delay(this.#options.retryDelayMs);
+    }
+  }
+
+  async #tryAcquireLock(
+    lockPath = this.#options.paths.lockPath,
+  ): Promise<(() => Promise<void>) | null> {
     try {
-      const handle = await open(this.#options.paths.lockPath, 'wx', 0o600);
-      const lockPath = this.#options.paths.lockPath;
+      const handle = await open(lockPath, 'wx', 0o600);
       try {
         const lock: StartupLock = { pid: process.pid, startedAt: new Date().toISOString() };
         await handle.writeFile(`${JSON.stringify(lock)}\n`);
@@ -579,12 +584,9 @@ export class LocalTlsService {
     }
   }
 
-  async #clearStaleLock(): Promise<void> {
+  async #clearStaleLock(lockPath = this.#options.paths.lockPath): Promise<void> {
     try {
-      const [contents, details] = await Promise.all([
-        readFile(this.#options.paths.lockPath, 'utf8'),
-        stat(this.#options.paths.lockPath),
-      ]);
+      const [contents, details] = await Promise.all([readFile(lockPath, 'utf8'), stat(lockPath)]);
       let lock: StartupLock | null = null;
       try {
         const value = JSON.parse(contents) as Partial<StartupLock>;
@@ -596,7 +598,7 @@ export class LocalTlsService {
       }
       const isOld = Date.now() - details.mtimeMs >= this.#options.staleLockMs;
       if ((lock && !isProcessRunning(lock.pid)) || (!lock && isOld)) {
-        await unlink(this.#options.paths.lockPath);
+        await unlink(lockPath);
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {

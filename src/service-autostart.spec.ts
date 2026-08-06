@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ServiceState } from './interfaces/service-state.js';
 import { LocalTlsService } from './service.js';
 
@@ -13,24 +16,39 @@ const state: ServiceState = {
   caFingerprint: 'fingerprint',
 };
 
-function createService(): LocalTlsService {
+const temporaryDirectories = new Set<string>();
+let serviceSequence = 0;
+
+function createService(temporaryDirectory?: string): LocalTlsService {
+  const directory =
+    temporaryDirectory ??
+    path.join(os.tmpdir(), `vite-local-tls-autostart-${process.pid}-${serviceSequence++}`);
+  temporaryDirectories.add(directory);
   return new LocalTlsService({
     namespace: 'test',
     opensslPath: 'openssl',
     paths: {
-      stateDirectory: '/tmp/vite-local-tls-test-state',
-      runtimeDirectory: '/tmp/vite-local-tls-test-runtime',
-      socketPath: state.socketPath,
-      lockPath: '/tmp/vite-local-tls-test-runtime/startup.lock',
-      stateFile: '/tmp/vite-local-tls-test-state/service.json',
-      certificateDirectory: '/tmp/vite-local-tls-test-state/certificates',
-      importedCertificateDirectory: '/tmp/vite-local-tls-test-state/imported',
-      caKeyPath: '/tmp/vite-local-tls-test-state/ca-key.pem',
-      caCertificatePath: '/tmp/vite-local-tls-test-state/ca.pem',
-      caStatePath: '/tmp/vite-local-tls-test-state/ca.json',
+      stateDirectory: path.join(directory, 'state'),
+      runtimeDirectory: path.join(directory, 'runtime'),
+      socketPath: path.join(directory, 'runtime', 'control.sock'),
+      lockPath: path.join(directory, 'runtime', 'startup.lock'),
+      stateFile: path.join(directory, 'state', 'service.json'),
+      certificateDirectory: path.join(directory, 'state', 'certificates'),
+      importedCertificateDirectory: path.join(directory, 'state', 'imported'),
+      caKeyPath: path.join(directory, 'state', 'ca-key.pem'),
+      caCertificatePath: path.join(directory, 'state', 'ca.pem'),
+      caStatePath: path.join(directory, 'state', 'ca.json'),
     },
   });
 }
+
+afterEach(async () => {
+  vi.useRealTimers();
+  await Promise.all(
+    [...temporaryDirectories].map((directory) => rm(directory, { recursive: true, force: true })),
+  );
+  temporaryDirectories.clear();
+});
 
 function codedError(code: string): Error {
   return Object.assign(new Error(code), { code });
@@ -253,17 +271,139 @@ describe('local TLS service auto-start', () => {
     expect(installService).not.toHaveBeenCalled();
   });
 
-  it('bounds an interactive authorization flow that never resolves', async () => {
+  it('waits for interactive service authorization for longer than 30 seconds', async () => {
     const service = createService();
+    vi.spyOn(service, 'ensureRunning').mockRejectedValue(codedError('EACCES'));
+    vi.spyOn(service, 'status').mockResolvedValue({
+      running: true,
+      activeRoutes: 0,
+      protocolVersion: 1,
+      compatible: true,
+      state,
+    });
+    let finishInstall: (() => void) | undefined;
+    const installService = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishInstall = resolve;
+        }),
+    );
 
-    await expect(
-      service.autoStart({
+    try {
+      const result = service.autoStart({
         interactive: true,
-        authorizationTimeoutMs: 10,
-        isTrusted: async () => false,
-        trust: () => new Promise(() => undefined),
-        installService: async () => undefined,
-      }),
-    ).rejects.toMatchObject({ code: 'AUTHORIZATION_TIMEOUT' });
+        isTrusted: async () => true,
+        trust: async () => undefined,
+        installService,
+      });
+      await vi.waitFor(() => expect(installService).toHaveBeenCalledOnce());
+      vi.useFakeTimers();
+      const settled = vi.fn();
+      void result.then(settled, settled);
+
+      await vi.advanceTimersByTimeAsync(30_001);
+
+      expect(settled).not.toHaveBeenCalled();
+      finishInstall?.();
+      await expect(result).resolves.toBe(state);
+      expect(installService).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('serializes trust authorization across simultaneous service starts', async () => {
+    const temporaryDirectory = path.join(
+      os.tmpdir(),
+      `vite-local-tls-autostart-shared-trust-${process.pid}`,
+    );
+    const firstService = createService(temporaryDirectory);
+    const secondService = createService(temporaryDirectory);
+    vi.spyOn(firstService, 'ensureRunning').mockResolvedValue(state);
+    vi.spyOn(secondService, 'ensureRunning').mockResolvedValue(state);
+    let trusted = false;
+    let finishTrust: (() => void) | undefined;
+    const trust = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishTrust = function resolveTrust() {
+            trusted = true;
+            resolve();
+          };
+        }),
+    );
+    const onAuthorizationWait = vi.fn();
+    const options = {
+      interactive: true,
+      onAuthorizationWait,
+      isTrusted: async () => trusted,
+      trust,
+      installService: async () => undefined,
+    };
+
+    const firstStart = firstService.autoStart(options);
+    await vi.waitFor(() => expect(trust).toHaveBeenCalledOnce());
+    const secondStart = secondService.autoStart(options);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(trust).toHaveBeenCalledOnce();
+    finishTrust?.();
+    await expect(Promise.all([firstStart, secondStart])).resolves.toEqual([state, state]);
+    expect(trust).toHaveBeenCalledOnce();
+    expect(onAuthorizationWait).toHaveBeenCalledOnce();
+  });
+
+  it('serializes service authorization across simultaneous service starts', async () => {
+    const temporaryDirectory = path.join(
+      os.tmpdir(),
+      `vite-local-tls-autostart-shared-service-${process.pid}`,
+    );
+    const firstService = createService(temporaryDirectory);
+    const secondService = createService(temporaryDirectory);
+    let installed = false;
+    for (const service of [firstService, secondService]) {
+      vi.spyOn(service, 'ensureRunning').mockImplementation(async () => {
+        if (!installed) {
+          throw codedError('EACCES');
+        }
+        return state;
+      });
+      vi.spyOn(service, 'status').mockResolvedValue({
+        running: true,
+        activeRoutes: 0,
+        protocolVersion: 1,
+        compatible: true,
+        state,
+      });
+    }
+    let finishInstall: (() => void) | undefined;
+    const installService = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishInstall = function resolveInstall() {
+            installed = true;
+            resolve();
+          };
+        }),
+    );
+    const onAuthorizationWait = vi.fn();
+    const options = {
+      interactive: true,
+      onAuthorizationWait,
+      isTrusted: async () => true,
+      trust: async () => undefined,
+      installService,
+    };
+
+    const firstStart = firstService.autoStart(options);
+    await vi.waitFor(() => expect(installService).toHaveBeenCalledOnce());
+    const secondStart = secondService.autoStart(options);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(installService).toHaveBeenCalledOnce();
+    finishInstall?.();
+    await expect(Promise.all([firstStart, secondStart])).resolves.toEqual([state, state]);
+    expect(installService).toHaveBeenCalledOnce();
+    expect(onAuthorizationWait).toHaveBeenCalledOnce();
   });
 });

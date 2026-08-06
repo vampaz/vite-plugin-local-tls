@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,6 +8,18 @@ import type { StatePaths } from './interfaces/state-paths.js';
 import { installStartupService, uninstallStartupService } from './service-install.js';
 
 let temporaryDirectory: string;
+
+function compileAppleScript(arguments_: string[], outputPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile('/usr/bin/osacompile', ['-o', outputPath, ...arguments_], (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
 
 function statePaths(): StatePaths {
   const stateDirectory = path.join(temporaryDirectory, 'state');
@@ -88,13 +101,24 @@ describe('macOS startup service', () => {
       arguments_: string[];
       allowFailure?: boolean;
     }>;
-    expect(installCall[0]).toBe(process.execPath);
-    expect(installCall[1].slice(0, 3)).toEqual([
-      '--input-type=module',
-      '--eval',
+    expect(installCall[0]).toBe('/usr/bin/osascript');
+    expect(
+      installCall[1].some((argument) =>
+        argument.includes(
+          'do shell script (commandPath & " --input-type=module --eval " & source & " " & requests) with administrator privileges',
+        ),
+      ),
+    ).toBe(true);
+    expect(installCall[1].slice(-3)).toEqual([
+      process.execPath,
+      expect.any(String),
       expect.any(String),
     ]);
-    expect(installCall[2]).toEqual({ interactive: true });
+    expect(installCall[1].slice(0, 4)).toEqual(['-e', 'on run argv', '-e', expect.any(String)]);
+    expect(installCall[1]).not.toContain('--');
+    expect(installCall[2]).toBeUndefined();
+    expect(installCall[1].at(-2)).toContain('spawnSync(request.command, request.arguments_');
+    expect(installCall[1].at(-2)).toContain('timeout: 15_000');
     expect(installSequence.map(({ command }) => command)).toEqual([
       'mkdir',
       'install',
@@ -114,6 +138,12 @@ describe('macOS startup service', () => {
       'com.vampaz.vite-local-tls.test',
     ]);
     expect(installSequence[6]?.arguments_).toEqual(['bootstrap', 'system', definitionPath]);
+    if (process.platform === 'darwin') {
+      await compileAppleScript(
+        installCall[1].slice(0, -3),
+        path.join(temporaryDirectory, 'authorization.scpt'),
+      );
+    }
 
     await uninstallStartupService(options);
 
@@ -125,8 +155,8 @@ describe('macOS startup service', () => {
       arguments_: string[];
       allowFailure?: boolean;
     }>;
-    expect(uninstallCall[0]).toBe(process.execPath);
-    expect(uninstallCall[2]).toEqual({ interactive: true });
+    expect(uninstallCall[0]).toBe('/usr/bin/osascript');
+    expect(uninstallCall[2]).toBeUndefined();
     expect(uninstallSequence.map(({ command }) => command)).toEqual([
       'launchctl',
       process.execPath,
@@ -197,9 +227,7 @@ describe('macOS startup service', () => {
     await expect(
       access(path.join(options.definitionDirectory, 'com.vampaz.vite-local-tls.test.plist')),
     ).rejects.toThrow();
-    expect(runner).toHaveBeenCalledWith(process.execPath, expect.any(Array), {
-      interactive: true,
-    });
+    expect(runner).toHaveBeenCalledWith('/usr/bin/osascript', expect.any(Array));
   });
 
   it('refuses a tampered recursive runtime deletion target', async () => {

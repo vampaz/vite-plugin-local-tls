@@ -1,6 +1,6 @@
 export interface ServiceAutoStartOptions {
   interactive?: boolean;
-  authorizationTimeoutMs?: number;
+  onAuthorizationWait?: () => void;
   isTrusted: () => Promise<boolean>;
   trust: () => Promise<void>;
   isServiceCurrent?: () => Promise<boolean>;

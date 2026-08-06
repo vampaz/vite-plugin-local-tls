@@ -359,7 +359,7 @@ Every source test remains adjacent to its source file. Cross-package contract an
     - Commit: `feat: manage imported exact-host certificates`
 
   - [x] Step 4.5: Install, verify, and remove CA trust on macOS
-    - Objective: Use argument-array child processes for `security`, target the intended keychain, verify the exact fingerprint rather than trusting marker files alone, handle authorization timeouts, and remove only this plugin's CA.
+    - Objective: Use argument-array child processes for `security`, target the intended keychain, verify the exact fingerprint rather than trusting marker files alone, allow active administrator authorization to finish without a wall-clock deadline, and remove only this plugin's CA.
     - Files: `src/trust-store.ts`, `src/trust-store-macos.spec.ts`
     - Test file: `src/trust-store-macos.spec.ts`
     - Verification: `npm run test -- src/trust-store-macos.spec.ts`
@@ -417,7 +417,7 @@ Every source test remains adjacent to its source file. Cross-package contract an
     - Commit: `feat: install least-privilege proxy service`
 
   - [x] Step 5.6: Auto-start the daemon with clear interactive and non-interactive behavior
-    - Objective: Match the current zero-setup startup as closely as platform security permits. Start directly when port 443 is available, perform a bounded first-run trust/elevation flow only in an interactive terminal, and fail early with the exact `vite-local-tls service install` or `trust` command in CI/non-interactive contexts.
+    - Objective: Match the current zero-setup startup as closely as platform security permits. Start directly when port 443 is available, serialize first-run trust/elevation in interactive terminals, bound only post-authorization service readiness, and fail early with the exact `vite-local-tls service install` or `trust` command in CI/non-interactive contexts.
     - Files: `src/service.ts`, `src/service-autostart.spec.ts`, `src/cli.ts`
     - Test file: `src/service-autostart.spec.ts`
     - Verification: `npm run test -- src/service-autostart.spec.ts`
