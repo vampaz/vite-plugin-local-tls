@@ -1,20 +1,28 @@
 # @vampaz/vite-plugin-local-tls
 
-Zero-dependency local HTTPS routing for Vite dev and preview servers. It gives every Git checkout a stable, trusted HTTPS URL without installing, starting, configuring, or communicating with Caddy.
+Local HTTPS routing for Vite dev and preview servers, with a stable, locally trusted URL for every Git checkout.
 
 ```text
-https://fieldlock.master.localhost
-https://fieldlock.fix-tracking.localhost
-https://fieldlock.new-editor.localhost
+https://<repo>.<branch>.localhost
 ```
 
-The package has no runtime npm dependencies. Vite is a peer dependency; Node.js 22 or newer, Git, OpenSSL, and a supported operating-system trust tool are system requirements.
+The package has no runtime npm dependencies and supports concurrent clones and Git worktrees through one loopback-only TLS service.
+
+## Requirements
+
+- Node.js 22 or newer
+- Vite 3 through 8
+- OpenSSL on `PATH`
+- A supported operating-system trust tool: macOS `security`, Windows `certutil`, or a Linux trust tool such as `update-ca-certificates`, `update-ca-trust`, or `trust`
+- Git when deriving the repository and branch names automatically; without Git, provide `domain` or both `repo` and `branch`
 
 ## Install
 
 ```bash
 npm install --save-dev @vampaz/vite-plugin-local-tls
 ```
+
+Add the plugin to your Vite configuration:
 
 ```ts
 // vite.config.ts
@@ -26,151 +34,193 @@ export default defineConfig({
 });
 ```
 
-Start Vite normally. The plugin derives `<repo>.<branch>.localhost`, starts or reuses one per-user loopback TLS service, registers Vite's actual bound port, and prints the public URL and upstream target. The first interactive run can ask the OS to trust the package's local CA and, when required, install the startup service that can bind port 443. On macOS, service installation uses a native administrator dialog with a Vite Local TLS explanation; it should appear once per installation or update. Simultaneous Vite starts wait for that authorization instead of opening additional password dialogs.
+Start Vite with your project's normal development script, for example:
 
-The same configuration works with Vite preview. Run your normal build command, then `vite preview`; the plugin's `configurePreviewServer` integration registers the preview server after it has selected a port.
-
-## Checkout identity and ownership
-
-A regular clone, the primary checkout, and every linked worktree use their own current Git branch. Branch names are sanitized into DNS labels, and detached HEADs use the short commit SHA. Explicit `repo` and `branch` values work when Git is unavailable.
-
-Two different branches run concurrently without configuration. To run two copies of the same branch, give each a stable `instanceLabel`:
-
-```ts
-localTls({ instanceLabel: 'editor-a' });
+```bash
+npm run dev
 ```
 
-That produces a URL such as `https://fieldlock.master.editor-a.localhost`. If two processes intentionally resolve the exact same hostname, ownership is latest-started-wins. The older Vite process keeps running but can no longer remove the newer route during cleanup.
+The plugin registers Vite's actual bound port and prints both ends of the route:
 
-Use one fixed domain or multiple domains when Git-derived names are not appropriate:
+```text
+Local TLS upstream: http://127.0.0.1:5173
+Local TLS URL: https://<repo>.<branch>.localhost
+```
+
+The first interactive run may request administrator authorization to trust the local certificate authority and install the service that binds port 443. On macOS, service installation or updates use a native administrator dialog. If several Vite processes start together, they wait for the same authorization flow instead of opening competing prompts.
+
+The same configuration supports Vite preview (`vite preview`); the route is registered after Vite selects the preview port.
+
+## Generated URLs and concurrent checkouts
+
+By default, the plugin reads the current Git checkout and builds the hostname from its repository and branch names. A regular clone, the primary checkout, and each linked worktree use their own current branch.
+
+| Checkout                         | URL                                            |
+| -------------------------------- | ---------------------------------------------- |
+| Branch                           | `https://<repo>.<branch>.localhost`            |
+| Detached HEAD                    | `https://<repo>.<short-sha>.localhost`         |
+| Checkout with an `instanceLabel` | `https://<repo>.<branch>.<instance>.localhost` |
+
+Generated repository, branch, and instance labels are lowercased, sanitized, and compacted into valid DNS labels. Separate branches and worktrees can run concurrently, even when Vite assigns different upstream ports.
+
+If two processes claim the same exact hostname, the latest one wins. An older process cannot remove the newer route when it exits. Claims in a `domain` array are tracked independently, so replacing one hostname does not disturb its siblings.
+
+Use an instance label when you need more than one server for the same branch:
+
+```ts
+localTls({ instanceLabel: 'instance-a' });
+```
+
+Use `domain` when the URL should not depend on Git metadata. For multiple domains, pass an array:
 
 ```ts
 localTls({ domain: 'app.localhost' });
-
-localTls({
-  domain: ['app.localhost', 'api.localhost'],
-});
+localTls({ domain: ['app.localhost', 'api.localhost'] });
 ```
 
-Each hostname is claimed independently, so taking over `app.localhost` does not remove the older process's `api.localhost` route.
+## Configuration
 
-## Options
+### URL options
 
-| Option               | Behavior                                                                                                                                                                            |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `domain`             | One hostname or an array of explicit hostnames. Values are trimmed, lowercased, de-duplicated, and used instead of Git derivation.                                                  |
-| `baseDomain`         | Suffix for `<repo>.<branch>.<baseDomain>`; defaults to `localhost`.                                                                                                                 |
-| `loopbackDomain`     | Uses `localtest.me`, `lvh.me`, or `nip.io` instead of the default base domain.                                                                                                      |
-| `repo`               | Overrides the detected repository label.                                                                                                                                            |
-| `branch`             | Overrides the detected branch label.                                                                                                                                                |
-| `instanceLabel`      | Adds a deterministic label after the branch for two copies of the same branch.                                                                                                      |
-| `cors`               | Replaces the proxied response's CORS allow-origin value and adds the legacy allow-methods and allow-headers values without synthesizing an application response.                    |
-| `controlSocket`      | Selects an alternate Unix control socket or Windows named pipe. It is not an HTTP endpoint.                                                                                         |
-| `serviceNamespace`   | Isolates the service state and control-channel name. Use a namespace only when a deliberately separate service is required.                                                         |
-| `serverName`         | Deprecated compatibility alias for `serviceNamespace`.                                                                                                                              |
-| `caddyApiUrl`        | Deprecated compatibility no-op. It warns because the replacement has no HTTP Admin API; use `controlSocket` if a custom control channel is required.                                |
-| `caddyAdminOrigin`   | Deprecated compatibility no-op. It warns because the replacement has no HTTP Admin API Origin policy.                                                                               |
-| `internalTls`        | `true` forces the local CA. Local and loopback names also use local automation when omitted or `false`; a custom hostname with `false` requires an imported exact-host certificate. |
-| `upstreamHostHeader` | Rewrites the `Host` header sent to Vite or middleware such as Wrangler/Miniflare.                                                                                                   |
+| Option           | Description                                                                                         |
+| ---------------- | --------------------------------------------------------------------------------------------------- |
+| `domain`         | One hostname or an array of hostnames. Overrides generated checkout hostnames.                      |
+| `repo`           | Repository label override.                                                                          |
+| `branch`         | Branch label override.                                                                              |
+| `instanceLabel`  | Optional label appended after the branch for multiple instances of one checkout.                    |
+| `baseDomain`     | Base domain used for generated hostnames. Defaults to `localhost`.                                  |
+| `loopbackDomain` | Selects `localtest.me`, `lvh.me`, or `nip.io` as the generated hostname's public loopback DNS base. |
 
-The plugin defaults `server.host`, `server.allowedHosts`, `preview.host`, and `preview.allowedHosts` to `true`. When it resolves a hostname, it defaults Vite HMR to WSS on that hostname and public port 443. Explicit Vite values win.
+`baseDomain` takes precedence over `loopbackDomain` when both are set.
 
-## Pure helpers
+### Proxy and service options
 
-The Caddy-neutral helpers use the same checkout and normalization rules without starting infrastructure:
+| Option               | Description                                                                                                                             |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `cors`               | Sets the proxied response's allow-origin value, allows common HTTP methods, and sets allow-headers to `*`.                              |
+| `upstreamHostHeader` | Rewrites the HTTP `Host` header sent to Vite. The default preserves the public hostname. WebSocket upgrades use the same value.         |
+| `internalTls`        | Controls certificate policy. Local and supported loopback names remain automated; see [Certificate policy](#certificate-policy).        |
+| `serviceNamespace`   | Isolates service state and the control channel. Useful for tests or deliberately separate environments.                                 |
+| `controlSocket`      | Overrides the private Unix socket or Windows named pipe. Use only a location protected from other users; see [Security](./SECURITY.md). |
 
-```ts
-import { resolveLocalTlsDomains, resolveLocalTlsUrl } from '@vampaz/vite-plugin-local-tls';
+The plugin supplies Vite defaults only when you have not set them yourself:
 
-const url = resolveLocalTlsUrl({ baseDomain: 'localhost' });
-const domains = resolveLocalTlsDomains({
-  domain: ['app.localhost', 'api.localhost'],
-});
-```
+- `server.host`, `preview.host`, and their `allowedHosts` values are enabled for local routing.
+- HMR defaults to WSS on the public hostname and port 443.
+- Explicit Vite server, preview, and HMR settings always win.
 
-`resolveLocalTlsUrl()` returns `null` when zero or multiple domains resolve. `resolveLocalTlsDomains()` returns every resolved hostname or `null`.
+Compatibility options from `vite-plugin-caddy-multiple-tls` remain available: `serverName` is a deprecated alias for `serviceNamespace`, while `caddyApiUrl` and `caddyAdminOrigin` are deprecated no-ops. The exported `resolveCaddyTlsDomains`, `resolveCaddyTlsUrl`, and `ViteCaddyTlsPluginOptions` names are also deprecated aliases. See the dedicated [migration guide](./MIGRATION.md) for details.
 
-Existing migrations may keep `resolveCaddyTlsDomains`, `resolveCaddyTlsUrl`, and `ViteCaddyTlsPluginOptions`; they are deprecated aliases with the same results. This allows the package import to be replaced before adopting the Caddy-neutral names.
+## Certificate policy
 
-## Certificates and commands
+The plugin creates a per-user local certificate authority and generates certificates for exact hostnames only. It does not generate wildcard certificates.
 
-The service creates one per-user CA and issues certificates only for exact hostnames that an active Vite process is registering. Useful commands are available through the installed `vite-local-tls` executable; for a local dev dependency, prefix them with `npm exec --`.
+- When `internalTls` is omitted or `true`, every hostname uses the local certificate authority.
+- `.localhost` and supported loopback domains still use the local certificate authority when `internalTls` is `false`.
+- A custom non-local hostname with `internalTls: false` requires an imported exact-host certificate.
+- Imported certificates must be valid, contain the exact hostname SAN, and match their private key.
+- The proxy never falls back to unencrypted HTTP.
+
+Import and manage custom certificates with the CLI:
 
 ```bash
-npm exec -- vite-local-tls doctor
-npm exec -- vite-local-tls trust
-npm exec -- vite-local-tls untrust
-
-npm exec -- vite-local-tls proxy status
-npm exec -- vite-local-tls proxy start
-npm exec -- vite-local-tls proxy stop
-
-npm exec -- vite-local-tls service install
-npm exec -- vite-local-tls service uninstall
-
 npm exec -- vite-local-tls cert import --hostname app.example.test --cert cert.pem --key key.pem --chain chain.pem
 npm exec -- vite-local-tls cert list
 npm exec -- vite-local-tls cert remove --hostname app.example.test
 ```
 
-When port 443 needs a persistent service, installation copies Node and the bundled service entry point into a durable runtime outside the consumer checkout. macOS installs a root-owned LaunchDaemon that binds the low port and then drops to the installing user's UID and GID before opening the control channel. Linux runs as the installing user with only `CAP_NET_BIND_SERVICE`. Windows runs a current-user task at logon, preserving that user's CA trust, state directory, and named-pipe identity.
+The `--chain` option is optional.
 
-For a custom non-local hostname with `internalTls: false`, import a certificate whose key and exact SAN match the hostname before starting Vite. The `--chain` argument is optional.
+## URL helpers
 
-Add `--namespace <name>` to any command that operates on a non-default `serviceNamespace`. Add `--control-socket <path>` when the plugin uses a matching custom `controlSocket`.
+Use the exported helpers when another tool needs the same URL without starting Vite or the TLS service:
 
-## DNS and Linux
+```ts
+import { resolveLocalTlsDomains, resolveLocalTlsUrl } from '@vampaz/vite-plugin-local-tls';
 
-`*.localhost` is the safest default, but some Linux resolvers do not map every subdomain automatically. Add the exact printed hostname to `/etc/hosts`, configure a local resolver, or select a supported `loopbackDomain`:
+const domains = resolveLocalTlsDomains();
+const url = resolveLocalTlsUrl();
+```
+
+`resolveLocalTlsDomains()` returns every resolved hostname, or `null` when no valid hostname can be resolved. `resolveLocalTlsUrl()` returns an HTTPS URL only when exactly one hostname resolves; it returns `null` for zero or multiple hostnames.
+
+## CLI and diagnostics
+
+Run the CLI through the locally installed package:
+
+```bash
+# Check prerequisites and current service state
+npm exec -- vite-local-tls doctor
+npm exec -- vite-local-tls proxy status
+
+# Manage CA trust
+npm exec -- vite-local-tls trust
+npm exec -- vite-local-tls untrust
+
+# Manage the proxy and startup service
+npm exec -- vite-local-tls proxy start
+npm exec -- vite-local-tls proxy stop
+npm exec -- vite-local-tls service install
+npm exec -- vite-local-tls service uninstall
+
+# Remove generated state; add --ca to include CA files
+npm exec -- vite-local-tls clean
+npm exec -- vite-local-tls clean --ca
+```
+
+All commands accept `--namespace <name>` for isolated state and `--control-socket <path>` for an alternate private control channel. Run `npm exec -- vite-local-tls --help` for the complete command reference.
+
+## Platform and DNS notes
+
+The TLS proxy listens only on `127.0.0.1` and `::1`. It does not expose a LAN-listening mode, an HTTP administration endpoint, or a network certificate-signing API. If another process owns port 443, the plugin reports the conflict and leaves that process untouched.
+
+The default `*.localhost` names do not depend on public DNS. Some Linux resolvers do not map arbitrary `*.localhost` names to loopback; use `loopbackDomain` when necessary:
 
 ```ts
 localTls({ loopbackDomain: 'localtest.me' });
 ```
 
-`localtest.me`, `lvh.me`, and `nip.io` rely on public DNS and can fail offline or on restricted networks. Hosts files do not support wildcard entries.
+`localtest.me`, `lvh.me`, and `nip.io` are public DNS services. They may be unavailable offline or filtered by the current network.
 
-## Troubleshooting and diagnostics
+Trusting the CA at the operating-system level does not guarantee that every embedded browser, webview, automation runtime, or managed browser profile uses that trust store. If one browser surface still rejects the certificate, verify the exact CA fingerprint in that surface instead of disabling certificate validation.
 
-Run `npm exec -- vite-local-tls doctor` to inspect OpenSSL, the platform trust tool, CA state, service compatibility, and active-route count.
+See [Security](./SECURITY.md) for the complete trust, network, service, and control-channel boundaries.
 
-- Missing OpenSSL or trust tooling fails startup explicitly; the plugin never downgrades to HTTP.
-- Administrator authorization has no wall-clock deadline. If another Vite process is already showing the OS dialog, later starts print that they are waiting for it.
-- If port 443 has an unrelated listener, the plugin reports the conflict and leaves that process untouched.
-- If a hostname opens the newest matching Vite process, add `instanceLabel` or an explicit `domain`.
-- If custom-certificate startup fails, verify the certificate/key pair and exact hostname SAN, then run `vite-local-tls cert import` again.
-- If a browser still rejects the certificate after OS trust succeeds, see the embedded-browser boundary in [SECURITY.md](./SECURITY.md).
+## Troubleshooting
 
-## Uninstall
+- Run `npm exec -- vite-local-tls doctor` first to inspect system requirements and service health.
+- Run Vite or lifecycle commands in an interactive terminal when administrator authorization is required.
+- If an installed service is outdated, stop active Vite routes and run `npm exec -- vite-local-tls service install`.
+- If port 443 is occupied, identify and stop or reconfigure that process yourself; the plugin will not terminate it.
+- If the wrong server owns a hostname, choose a unique `domain` or `instanceLabel`, or restart the intended server so it makes the latest claim.
+- If a custom non-local hostname fails with `internalTls: false`, import a matching certificate before starting Vite.
 
-Stop all Vite processes using the service, then remove only package-owned resources:
+## Uninstall completely
+
+Stop every Vite process using the plugin, then remove the service, trust, and state in this order:
 
 ```bash
 npm exec -- vite-local-tls proxy stop
 npm exec -- vite-local-tls service uninstall
 npm exec -- vite-local-tls untrust
 npm exec -- vite-local-tls clean --ca
+```
+
+`proxy stop` refuses to stop while routes are active. `clean --ca` refuses to remove CA files until the exact CA fingerprint is no longer trusted.
+
+Finally, remove the package from the project:
+
+```bash
 npm uninstall @vampaz/vite-plugin-local-tls
 ```
 
-`proxy stop` refuses while routes are active. `clean --ca` refuses while the CA is still trusted. The service uninstaller verifies ownership before removing a launchd definition, systemd unit, or Windows scheduled task.
+## Project documentation
 
-Migrating from the Caddy plugin? Read [MIGRATION.md](./MIGRATION.md). Security boundaries and reporting instructions are in [SECURITY.md](./SECURITY.md).
-
-## Contributing and releases
-
-Development setup and Changeset requirements are in [CONTRIBUTING.md](./CONTRIBUTING.md). The tested `Version Packages` pull request, npm OIDC publication, provenance, and one-time bootstrap process are documented in [RELEASING.md](./RELEASING.md).
-
-## Development
-
-```bash
-npm install
-npm run typecheck
-npm run lint
-npm run format:check
-npm run test
-npm run test:e2e
-```
+- [Migration from `vite-plugin-caddy-multiple-tls`](./MIGRATION.md)
+- [Security model and vulnerability reporting](./SECURITY.md)
+- [Contributing](./CONTRIBUTING.md)
+- [RELEASING.md](./RELEASING.md)
 
 ## License
 
-MIT
+[MIT](./LICENSE)
