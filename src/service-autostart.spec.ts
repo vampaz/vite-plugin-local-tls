@@ -55,6 +55,77 @@ describe('local TLS service auto-start', () => {
     expect(installService).not.toHaveBeenCalled();
   });
 
+  it('updates a stale installed service before registering a route', async () => {
+    const service = createService();
+    const start = vi.spyOn(service, 'ensureRunning');
+    vi.spyOn(service, 'status').mockResolvedValue({
+      running: true,
+      activeRoutes: 0,
+      protocolVersion: 1,
+      compatible: true,
+      state,
+    });
+    const installService = vi.fn(async () => undefined);
+
+    await expect(
+      service.autoStart({
+        interactive: true,
+        isTrusted: async () => true,
+        trust: async () => undefined,
+        isServiceCurrent: async () => false,
+        installService,
+      }),
+    ).resolves.toBe(state);
+    expect(installService).toHaveBeenCalledOnce();
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('refuses to replace a stale service while another route is active', async () => {
+    const service = createService();
+    const start = vi.spyOn(service, 'ensureRunning');
+    vi.spyOn(service, 'status').mockResolvedValue({
+      running: true,
+      activeRoutes: 1,
+      protocolVersion: 1,
+      compatible: true,
+      state,
+    });
+    const installService = vi.fn(async () => undefined);
+
+    await expect(
+      service.autoStart({
+        interactive: true,
+        isTrusted: async () => true,
+        trust: async () => undefined,
+        isServiceCurrent: async () => false,
+        installService,
+      }),
+    ).rejects.toMatchObject({ code: 'SERVICE_UPDATE_ROUTES_ACTIVE' });
+    expect(installService).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('requires an explicit service update outside an interactive terminal', async () => {
+    const service = createService();
+    const start = vi.spyOn(service, 'ensureRunning');
+    const installService = vi.fn(async () => undefined);
+
+    await expect(
+      service.autoStart({
+        interactive: false,
+        isTrusted: async () => true,
+        trust: async () => undefined,
+        isServiceCurrent: async () => false,
+        installService,
+      }),
+    ).rejects.toMatchObject({
+      code: 'SERVICE_UPDATE_REQUIRED',
+      message: expect.stringContaining('vite-local-tls service install'),
+    });
+    expect(installService).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+  });
+
   it('fails early with the exact trust command in non-interactive environments', async () => {
     const service = createService();
     const start = vi.spyOn(service, 'ensureRunning');
@@ -130,6 +201,39 @@ describe('local TLS service auto-start', () => {
       code: 'SERVICE_INSTALL_REQUIRED',
       message: expect.stringContaining('vite-local-tls service install'),
     });
+  });
+
+  it('never attempts service authorization in CI, even when terminal streams are TTYs', async () => {
+    const streams = [process.stdin, process.stdout, process.stderr];
+    const descriptors = streams.map((stream) => Object.getOwnPropertyDescriptor(stream, 'isTTY'));
+    vi.stubEnv('CI', '1');
+    for (const stream of streams) {
+      Object.defineProperty(stream, 'isTTY', { configurable: true, value: true });
+    }
+    try {
+      const service = createService();
+      vi.spyOn(service, 'ensureRunning').mockRejectedValue(codedError('EACCES'));
+      const installService = vi.fn(async () => undefined);
+
+      await expect(
+        service.autoStart({
+          isTrusted: async () => true,
+          trust: async () => undefined,
+          installService,
+        }),
+      ).rejects.toMatchObject({ code: 'SERVICE_INSTALL_REQUIRED' });
+      expect(installService).not.toHaveBeenCalled();
+    } finally {
+      streams.forEach((stream, index) => {
+        const descriptor = descriptors[index];
+        if (descriptor) {
+          Object.defineProperty(stream, 'isTTY', descriptor);
+        } else {
+          Reflect.deleteProperty(stream, 'isTTY');
+        }
+      });
+      vi.unstubAllEnvs();
+    }
   });
 
   it('does not treat an occupied port as an authorization prompt', async () => {

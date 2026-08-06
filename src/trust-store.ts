@@ -1,7 +1,9 @@
-import { execFile } from 'node:child_process';
 import { X509Certificate } from 'node:crypto';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { executeCommand } from './command-runner.js';
+import type { CommandExecutionOptions } from './interfaces/command-execution-options.js';
 import type {
   CommandResult,
   CommandRunner,
@@ -15,26 +17,9 @@ function runCommand(
   command: string,
   arguments_: string[],
   timeoutMs: number,
+  options?: CommandExecutionOptions,
 ): Promise<CommandResult> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      command,
-      arguments_,
-      { timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 },
-      (error, stdout, stderr) => {
-        if (error) {
-          reject(
-            new Error(
-              `Command failed: ${command} ${arguments_.join(' ')}\n${stderr.trim() || error.message}`,
-              { cause: error },
-            ),
-          );
-          return;
-        }
-        resolve({ stdout, stderr });
-      },
-    );
-  });
+  return executeCommand(command, arguments_, { ...options, timeoutMs });
 }
 
 function normalizeFingerprint(value: string): string {
@@ -72,7 +57,6 @@ export class TrustStore {
     if (requirements.platform === 'darwin') {
       await this.#run(requirements.trustToolPath, [
         'add-trusted-cert',
-        '-d',
         '-r',
         'trustRoot',
         '-k',
@@ -109,7 +93,9 @@ export class TrustStore {
         '-p',
         this.#macosKeychain(),
       ]);
-      trusted = pemFingerprints(result.stdout).includes(authority.fingerprint);
+      trusted =
+        pemFingerprints(result.stdout).includes(authority.fingerprint) &&
+        (await this.#hasMacosTrustSettings());
     } else if (requirements.trustTool === 'certutil') {
       const result = await this.#run(requirements.trustToolPath, [
         '-user',
@@ -249,6 +235,24 @@ export class TrustStore {
     );
   }
 
+  async #hasMacosTrustSettings(): Promise<boolean> {
+    const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'vite-local-tls-trust-'));
+    const settingsPath = path.join(temporaryDirectory, 'trust-settings.plist');
+    try {
+      await this.#run(this.#options.requirements.trustToolPath!, [
+        'trust-settings-export',
+        settingsPath,
+      ]);
+      const settings = await readFile(settingsPath, 'utf8');
+      const fingerprint = this.#options.authority.fingerprintSha1.toUpperCase();
+      return new RegExp(`<key>\\s*${fingerprint}\\s*</key>`, 'i').test(settings);
+    } catch {
+      return false;
+    } finally {
+      await rm(temporaryDirectory, { recursive: true, force: true });
+    }
+  }
+
   async #windowsPath(filePath: string): Promise<string> {
     const result = await this.#run('wslpath', ['-w', filePath]);
     const windowsPath = result.stdout.trim();
@@ -258,14 +262,18 @@ export class TrustStore {
     return windowsPath;
   }
 
-  #run(command: string, arguments_: string[]): Promise<CommandResult> {
-    return this.#runner(command, arguments_, COMMAND_TIMEOUT_MS);
+  #run(
+    command: string,
+    arguments_: string[],
+    options?: CommandExecutionOptions,
+  ): Promise<CommandResult> {
+    return this.#runner(command, arguments_, COMMAND_TIMEOUT_MS, options);
   }
 
   #runElevated(command: string, arguments_: string[]): Promise<CommandResult> {
     if (this.#options.useSudo === false || process.getuid?.() === 0) {
       return this.#run(command, arguments_);
     }
-    return this.#run('sudo', ['--', command, ...arguments_]);
+    return this.#run('sudo', ['--', command, ...arguments_], { interactive: true });
   }
 }

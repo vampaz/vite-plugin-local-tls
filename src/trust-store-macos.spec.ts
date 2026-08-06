@@ -1,5 +1,5 @@
 import { X509Certificate } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -31,12 +31,21 @@ describe('macOS trust store', () => {
       .replaceAll(':', '')
       .toLowerCase();
     let trusted = false;
-    const { calls, runner } = createRecordingRunner((_command, arguments_) => {
+    const { calls, runner } = createRecordingRunner(async (_command, arguments_) => {
       if (arguments_[0] === 'add-trusted-cert') {
         trusted = true;
       }
       if (arguments_[0] === 'delete-certificate') {
         trusted = false;
+      }
+      if (arguments_[0] === 'trust-settings-export') {
+        if (!trusted) {
+          throw new Error('No Trust Settings were found.');
+        }
+        await writeFile(
+          arguments_[1],
+          `<plist><dict><key>${fingerprintSha1.toUpperCase()}</key></dict></plist>`,
+        );
       }
       return {
         stdout: arguments_[0] === 'find-certificate' && trusted ? certificatePem : '',
@@ -67,7 +76,6 @@ describe('macOS trust store', () => {
       command: '/usr/bin/security',
       arguments_: [
         'add-trusted-cert',
-        '-d',
         '-r',
         'trustRoot',
         '-k',
@@ -76,9 +84,51 @@ describe('macOS trust store', () => {
       ],
       timeoutMs: 30_000,
     });
+    expect(calls.some(({ arguments_ }) => arguments_[0] === 'trust-settings-export')).toBe(true);
     expect(calls.some(({ arguments_ }) => arguments_.includes(fingerprintSha1.toUpperCase()))).toBe(
       true,
     );
+  });
+
+  it('does not mistake an imported certificate for a trusted certificate', async () => {
+    temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'vite-local-tls-macos-trust-'));
+    const sourceDirectory = path.join(temporaryDirectory, 'source');
+    await mkdir(sourceDirectory);
+    await createTestCertificate(sourceDirectory);
+    const certificatePath = path.join(sourceDirectory, 'certificate.pem');
+    const certificatePem = await readFile(certificatePath, 'utf8');
+    const certificate = new X509Certificate(certificatePem);
+    const authority = {
+      ...createAuthority(
+        certificatePath,
+        certificate.fingerprint256.replaceAll(':', '').toLowerCase(),
+      ),
+      fingerprintSha1: certificate.fingerprint.replaceAll(':', '').toLowerCase(),
+    };
+    const { runner } = createRecordingRunner((_command, arguments_) => {
+      if (arguments_[0] === 'trust-settings-export') {
+        throw new Error('No Trust Settings were found.');
+      }
+      return {
+        stdout: arguments_[0] === 'find-certificate' ? certificatePem : '',
+        stderr: '',
+      };
+    });
+    const store = new TrustStore({
+      authority,
+      requirements: {
+        platform: 'darwin',
+        isWsl: false,
+        opensslPath: '/usr/bin/openssl',
+        gitPath: '/usr/bin/git',
+        trustTool: 'security',
+        trustToolPath: '/usr/bin/security',
+        missing: [],
+      },
+      runner,
+    });
+
+    await expect(store.verify()).resolves.toMatchObject({ trusted: false });
   });
 
   it('does not trust a certificate with a similar name but a different fingerprint', async () => {

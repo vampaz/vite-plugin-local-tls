@@ -1,14 +1,22 @@
+import type {
+  CommandExecutionOptions,
+  CommandExecutionResult,
+} from './command-execution-options.js';
 import type { StatePaths } from './state-paths.js';
 
-export interface ServiceInstallCommandResult {
-  stdout: string;
-  stderr: string;
-}
+export type ServiceInstallCommandResult = CommandExecutionResult;
 
 export type ServiceInstallCommandRunner = (
   command: string,
   arguments_: string[],
+  options?: CommandExecutionOptions,
 ) => Promise<ServiceInstallCommandResult>;
+
+export interface ServiceInstallElevatedCommand {
+  command: string;
+  arguments_: string[];
+  allowFailure?: boolean;
+}
 
 export interface ServiceInstallOptions {
   platform?: NodeJS.Platform;

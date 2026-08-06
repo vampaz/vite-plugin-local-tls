@@ -347,7 +347,9 @@ export class LocalTlsService {
   async autoStart(options: ServiceAutoStartOptions): Promise<ServiceState> {
     const interactive =
       options.interactive ??
-      Boolean(process.stdin.isTTY && process.stdout.isTTY && !process.env.CI);
+      Boolean(
+        process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY && !process.env.CI,
+      );
     const authorizationTimeoutMs = options.authorizationTimeoutMs ?? 30_000;
     if (!(await options.isTrusted())) {
       if (!interactive) {
@@ -368,6 +370,27 @@ export class LocalTlsService {
         );
       }
     }
+    if (options.isServiceCurrent && !(await options.isServiceCurrent())) {
+      if (!interactive) {
+        throw new ServiceCoordinationError(
+          'SERVICE_UPDATE_REQUIRED',
+          'The installed local TLS service is outdated. Run `vite-local-tls service install` in an interactive terminal.',
+        );
+      }
+      const status = await this.status();
+      if (status.running && status.activeRoutes > 0) {
+        throw new ServiceCoordinationError(
+          'SERVICE_UPDATE_ROUTES_ACTIVE',
+          `The installed local TLS service is outdated, but ${status.activeRoutes} route(s) are active. Stop those Vite processes and start this project again.`,
+        );
+      }
+      await boundedOperation(
+        options.installService(),
+        authorizationTimeoutMs,
+        'Local TLS service update',
+      );
+      return this.#waitForInstalledService(authorizationTimeoutMs);
+    }
     try {
       return await this.ensureRunning();
     } catch (error) {
@@ -385,18 +408,7 @@ export class LocalTlsService {
         authorizationTimeoutMs,
         'Local TLS service installation',
       );
-      const deadline = Date.now() + authorizationTimeoutMs;
-      while (Date.now() < deadline) {
-        const status = await this.status();
-        if (status.running && status.compatible && status.state) {
-          return status.state;
-        }
-        await delay(this.#options.retryDelayMs);
-      }
-      throw new ServiceCoordinationError(
-        'SERVICE_START_TIMEOUT',
-        'The installed local TLS service did not become ready in time.',
-      );
+      return this.#waitForInstalledService(authorizationTimeoutMs);
     }
   }
 
@@ -446,6 +458,21 @@ export class LocalTlsService {
     await requestIdleStop(this.#options.paths.socketPath, this.#options.probeTimeoutMs);
     await this.#waitForStop(Date.now() + this.#options.startupTimeoutMs);
     return true;
+  }
+
+  async #waitForInstalledService(timeoutMs: number): Promise<ServiceState> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const status = await this.status();
+      if (status.running && status.compatible && status.state) {
+        return status.state;
+      }
+      await delay(this.#options.retryDelayMs);
+    }
+    throw new ServiceCoordinationError(
+      'SERVICE_START_TIMEOUT',
+      'The installed local TLS service did not become ready in time.',
+    );
   }
 
   async #readHealthyState(): Promise<ServiceState | null> {

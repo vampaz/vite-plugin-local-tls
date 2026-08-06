@@ -2,6 +2,7 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promise
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CommandExecutionOptions } from './interfaces/command-execution-options.js';
 import type { StatePaths } from './interfaces/state-paths.js';
 import { installStartupService, uninstallStartupService } from './service-install.js';
 
@@ -25,27 +26,33 @@ function statePaths(): StatePaths {
 }
 
 beforeEach(async () => {
+  vi.stubEnv('CI', '');
   temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'vite-local-tls-launchd-'));
 });
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await rm(temporaryDirectory, { recursive: true, force: true });
 });
 
 describe('macOS startup service', () => {
   it('installs and removes a root launch daemon through elevation', async () => {
     let definition = '';
-    const runner = vi.fn(async (_command: string, arguments_: string[]) => {
-      const temporaryPath = arguments_.find((argument) => argument.endsWith('.plist.tmp'));
-      if (temporaryPath) {
-        definition = await readFile(temporaryPath, 'utf8');
-      }
-      return { stdout: '', stderr: '' };
-    });
+    const paths = statePaths();
+    const temporaryDefinitionPath = path.join(
+      paths.stateDirectory,
+      'com.vampaz.vite-local-tls.test.plist.tmp',
+    );
+    const runner = vi.fn(
+      async (_command: string, _arguments: string[], _options?: CommandExecutionOptions) => {
+        definition = await readFile(temporaryDefinitionPath, 'utf8').catch(() => definition);
+        return { stdout: '', stderr: '' };
+      },
+    );
     const options = {
       platform: 'darwin' as const,
       namespace: 'test',
-      paths: statePaths(),
+      paths,
       nodePath: '/opt/homebrew/bin/node',
       cliPath: '/project/dist/cli.js',
       homeDirectory: temporaryDirectory,
@@ -74,30 +81,64 @@ describe('macOS startup service', () => {
     expect(installed.record?.cliPath).toBe(
       path.join(temporaryDirectory, 'system-runtime', 'cli.js'),
     );
-    expect(runner).toHaveBeenCalledWith('sudo', [
-      '--',
+    expect(runner).toHaveBeenCalledOnce();
+    const installCall = runner.mock.calls[0]!;
+    const installSequence = JSON.parse(installCall[1].at(-1)!) as Array<{
+      command: string;
+      arguments_: string[];
+      allowFailure?: boolean;
+    }>;
+    expect(installCall[0]).toBe(process.execPath);
+    expect(installCall[1].slice(0, 3)).toEqual([
+      '--input-type=module',
+      '--eval',
+      expect.any(String),
+    ]);
+    expect(installCall[2]).toEqual({ interactive: true });
+    expect(installSequence.map(({ command }) => command)).toEqual([
+      'mkdir',
       'install',
-      '-m',
-      '0755',
-      '/opt/homebrew/bin/node',
-      path.join(temporaryDirectory, 'system-runtime', 'node'),
-    ]);
-    expect(runner).toHaveBeenCalledWith('sudo', [
-      '--',
+      'install',
+      'install',
       'launchctl',
-      'bootstrap',
-      'system',
-      definitionPath,
+      process.execPath,
+      'launchctl',
+      'launchctl',
+      'launchctl',
     ]);
+    expect(installSequence[4]).toMatchObject({ allowFailure: true });
+    expect(installSequence[5]?.arguments_).toEqual([
+      '--input-type=module',
+      '--eval',
+      expect.any(String),
+      'com.vampaz.vite-local-tls.test',
+    ]);
+    expect(installSequence[6]?.arguments_).toEqual(['bootstrap', 'system', definitionPath]);
 
     await uninstallStartupService(options);
 
     await expect(access(definitionPath)).rejects.toThrow();
-    expect(runner).toHaveBeenCalledWith('sudo', [
-      '--',
+    expect(runner).toHaveBeenCalledTimes(2);
+    const uninstallCall = runner.mock.calls[1]!;
+    const uninstallSequence = JSON.parse(uninstallCall[1].at(-1)!) as Array<{
+      command: string;
+      arguments_: string[];
+      allowFailure?: boolean;
+    }>;
+    expect(uninstallCall[0]).toBe(process.execPath);
+    expect(uninstallCall[2]).toEqual({ interactive: true });
+    expect(uninstallSequence.map(({ command }) => command)).toEqual([
       'launchctl',
-      'bootout',
-      'system/com.vampaz.vite-local-tls.test',
+      process.execPath,
+      'rm',
+      'rm',
+    ]);
+    expect(uninstallSequence[0]).toMatchObject({ allowFailure: true });
+    expect(uninstallSequence[1]?.arguments_).toEqual([
+      '--input-type=module',
+      '--eval',
+      expect.any(String),
+      'com.vampaz.vite-local-tls.test',
     ]);
   });
 
@@ -128,6 +169,37 @@ describe('macOS startup service', () => {
     await writeFile(definitionPath, '<plist>unrelated</plist>');
 
     await expect(installStartupService(options)).rejects.toThrow(/unrelated service definition/);
+  });
+
+  it('does not leave an installation record when authorization is cancelled', async () => {
+    const runner = vi.fn(
+      async (_command: string, _arguments: string[], _options?: CommandExecutionOptions) => {
+        throw new Error('Authorization cancelled.');
+      },
+    );
+    const options = {
+      platform: 'darwin' as const,
+      namespace: 'test',
+      paths: statePaths(),
+      nodePath: '/usr/bin/node',
+      cliPath: '/project/dist/cli.js',
+      homeDirectory: temporaryDirectory,
+      definitionDirectory: path.join(temporaryDirectory, 'Library', 'LaunchDaemons'),
+      runtimeInstallDirectory: path.join(temporaryDirectory, 'system-runtime'),
+      runner,
+    };
+
+    await expect(installStartupService(options)).rejects.toThrow(/Authorization cancelled/);
+    await expect(
+      access(path.join(options.paths.stateDirectory, 'service-install.json')),
+    ).rejects.toThrow();
+    await expect(access(options.runtimeInstallDirectory)).rejects.toThrow();
+    await expect(
+      access(path.join(options.definitionDirectory, 'com.vampaz.vite-local-tls.test.plist')),
+    ).rejects.toThrow();
+    expect(runner).toHaveBeenCalledWith(process.execPath, expect.any(Array), {
+      interactive: true,
+    });
   });
 
   it('refuses a tampered recursive runtime deletion target', async () => {

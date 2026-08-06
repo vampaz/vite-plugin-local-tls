@@ -36,6 +36,7 @@ const LEAF_VALIDITY_DAYS = 30;
 const AUTHORITY_LOCK_STALE_MS = 30_000;
 const AUTHORITY_LOCK_TIMEOUT_MS = 30_000;
 const AUTHORITY_LOCK_RETRY_MS = 25;
+const EC_PUBLIC_KEY_OID = Buffer.from('06072a8648ce3d0201', 'hex');
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -58,6 +59,12 @@ function publicKeysMatch(certificate: X509Certificate, privateKeyPem: Buffer): b
   const publicFromPrivate = createPublicKey(privateKey).export({ type: 'spki', format: 'der' });
   const certificatePublicKey = certificate.publicKey.export({ type: 'spki', format: 'der' });
   return Buffer.from(publicFromPrivate).equals(Buffer.from(certificatePublicKey));
+}
+
+function usesNamedEcParameters(certificate: X509Certificate): boolean {
+  const publicKey = Buffer.from(certificate.publicKey.export({ type: 'spki', format: 'der' }));
+  const algorithmOffset = publicKey.indexOf(EC_PUBLIC_KEY_OID);
+  return algorithmOffset >= 0 && publicKey[algorithmOffset + EC_PUBLIC_KEY_OID.length] === 0x06;
 }
 
 function normalizeFingerprint(fingerprint: string): string {
@@ -190,6 +197,8 @@ export class CertificateManager {
         'ec',
         '-pkeyopt',
         'ec_paramgen_curve:prime256v1',
+        '-pkeyopt',
+        'ec_param_enc:named_curve',
         '-keyout',
         temporaryKeyPath,
         '-out',
@@ -230,6 +239,11 @@ export class CertificateManager {
     }
     if (!certificate.ca) {
       throw new Error('The stored local CA certificate is missing CA constraints.');
+    }
+    if (!usesNamedEcParameters(certificate)) {
+      throw new Error(
+        'The stored local CA uses incompatible explicit EC parameters. Remove its trust and run `vite-local-tls clean --ca` before regenerating it.',
+      );
     }
     if (!publicKeysMatch(certificate, privateKeyPem)) {
       throw new Error('The stored local CA key does not match its certificate.');
@@ -308,6 +322,7 @@ export class CertificateManager {
       const validTo = Date.parse(certificate.validTo);
       if (
         certificate.ca ||
+        !usesNamedEcParameters(certificate) ||
         certificate.checkHost(hostname) !== hostname ||
         !certificate.verify(caCertificate.publicKey) ||
         !publicKeysMatch(certificate, privateKeyPem) ||
@@ -366,6 +381,8 @@ export class CertificateManager {
         'ec',
         '-pkeyopt',
         'ec_paramgen_curve:prime256v1',
+        '-pkeyopt',
+        'ec_param_enc:named_curve',
         '-keyout',
         temporaryKeyPath,
         '-out',
