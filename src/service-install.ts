@@ -19,7 +19,7 @@ const MACOS_ELEVATED_SEQUENCE_SOURCE = [
   'import { spawnSync } from "node:child_process";',
   'const commands = JSON.parse(process.argv[1]);',
   'for (const request of commands) {',
-  '  const child = spawnSync("sudo", ["--", request.command, ...request.arguments_], { stdio: "inherit" });',
+  '  const child = spawnSync(request.command, request.arguments_, { stdio: "inherit", timeout: 15_000 });',
   '  if (child.error) console.error(child.error.message);',
   '  if ((child.error || child.status !== 0) && !request.allowFailure) process.exit(child.status ?? 1);',
   '}',
@@ -450,11 +450,23 @@ async function runElevatedCommands(
   commands: ServiceInstallElevatedCommand[],
 ): Promise<void> {
   if ((options.platform ?? process.platform) === 'darwin' && usesSudo(options) && !process.env.CI) {
-    await runner(
+    await runner('/usr/bin/osascript', [
+      '-e',
+      'on run argv',
+      '-e',
+      'set commandPath to quoted form of (item 1 of argv)',
+      '-e',
+      'set source to quoted form of (item 2 of argv)',
+      '-e',
+      'set requests to quoted form of (item 3 of argv)',
+      '-e',
+      'do shell script (commandPath & " --input-type=module --eval " & source & " " & requests) with administrator privileges with prompt "Vite Local TLS needs permission to install or update its local HTTPS service."',
+      '-e',
+      'end run',
       process.execPath,
-      ['--input-type=module', '--eval', MACOS_ELEVATED_SEQUENCE_SOURCE, JSON.stringify(commands)],
-      { interactive: true },
-    );
+      MACOS_ELEVATED_SEQUENCE_SOURCE,
+      JSON.stringify(commands),
+    ]);
     return;
   }
   for (const request of commands) {

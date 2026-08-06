@@ -207,6 +207,71 @@ describe('plugin daemon recovery', () => {
     ]);
   });
 
+  it('does not restart infrastructure after every hostname was taken over', async () => {
+    const clients: MockClient[] = [];
+    const runtime = createRuntime((options) => {
+      const client = createClient(options);
+      clients.push(client);
+      return client;
+    });
+    await startPlugin(runtime.dependencies, ['app.localhost']);
+    await vi.waitFor(() => expect(clients).toHaveLength(1));
+    clients[0]?.options.onRouteLost?.({
+      hostname: 'app.localhost',
+      ownerToken: clients[0]?.ownerToken ?? '',
+      replacementOwnerToken: 'new-owner-token',
+    });
+
+    clients[0]?.options.onDisconnect?.(new Error('daemon stopped'));
+    await flushPromises();
+    await flushPromises();
+
+    expect(clients).toHaveLength(1);
+    expect(runtime.ensureInfrastructure).toHaveBeenCalledOnce();
+  });
+
+  it('does not reclaim a hostname taken over while infrastructure is recovering', async () => {
+    const clients: MockClient[] = [];
+    const runtime = createRuntime((options) => {
+      const client = createClient(options);
+      clients.push(client);
+      return client;
+    });
+    await startPlugin(runtime.dependencies, ['app.localhost']);
+    await vi.waitFor(() => expect(clients).toHaveLength(1));
+    let finishRecovery: (() => void) | undefined;
+    runtime.ensureInfrastructure.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishRecovery = function resolveRecovery() {
+            resolve({
+              version: 1,
+              pid: process.pid,
+              namespace: 'default',
+              socketPath: '/tmp/reconnect.sock',
+              startedAt: new Date().toISOString(),
+              protocolVersion: 1,
+              port: 443,
+              caFingerprint: 'fingerprint',
+            });
+          };
+        }),
+    );
+
+    clients[0]?.options.onDisconnect?.(new Error('daemon stopped'));
+    await vi.waitFor(() => expect(runtime.ensureInfrastructure).toHaveBeenCalledTimes(2));
+    clients[0]?.options.onRouteLost?.({
+      hostname: 'app.localhost',
+      ownerToken: clients[0]?.ownerToken ?? '',
+      replacementOwnerToken: 'new-owner-token',
+    });
+    finishRecovery?.();
+    await flushPromises();
+    await flushPromises();
+
+    expect(clients).toHaveLength(1);
+  });
+
   it('reports a prominent HTTPS and HMR failure after bounded recovery attempts', async () => {
     const clients: MockClient[] = [];
     const runtime = createRuntime((options) => {

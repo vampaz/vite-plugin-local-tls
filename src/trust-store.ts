@@ -12,6 +12,7 @@ import type {
 } from './interfaces/trust-store-options.js';
 
 const COMMAND_TIMEOUT_MS = 30_000;
+const INTERACTIVE_AUTHORIZATION_TIMEOUT_MS = 0;
 
 function runCommand(
   command: string,
@@ -55,14 +56,19 @@ export class TrustStore {
       throw new Error('No supported operating-system trust tool is available.');
     }
     if (requirements.platform === 'darwin') {
-      await this.#run(requirements.trustToolPath, [
-        'add-trusted-cert',
-        '-r',
-        'trustRoot',
-        '-k',
-        this.#macosKeychain(),
-        this.#options.authority.certificatePath,
-      ]);
+      await this.#run(
+        requirements.trustToolPath,
+        [
+          'add-trusted-cert',
+          '-r',
+          'trustRoot',
+          '-k',
+          this.#macosKeychain(),
+          this.#options.authority.certificatePath,
+        ],
+        undefined,
+        INTERACTIVE_AUTHORIZATION_TIMEOUT_MS,
+      );
     } else if (requirements.trustTool === 'certutil') {
       const certificatePath = requirements.isWsl
         ? await this.#windowsPath(this.#options.authority.certificatePath)
@@ -144,12 +150,17 @@ export class TrustStore {
       throw new Error('No supported operating-system trust tool is available.');
     }
     if (requirements.platform === 'darwin') {
-      await this.#run(requirements.trustToolPath, [
-        'delete-certificate',
-        '-Z',
-        authority.fingerprintSha1.toUpperCase(),
-        this.#macosKeychain(),
-      ]);
+      await this.#run(
+        requirements.trustToolPath,
+        [
+          'delete-certificate',
+          '-Z',
+          authority.fingerprintSha1.toUpperCase(),
+          this.#macosKeychain(),
+        ],
+        undefined,
+        INTERACTIVE_AUTHORIZATION_TIMEOUT_MS,
+      );
     } else if (requirements.trustTool === 'certutil') {
       await this.#run(requirements.trustToolPath, [
         '-user',
@@ -266,8 +277,9 @@ export class TrustStore {
     command: string,
     arguments_: string[],
     options?: CommandExecutionOptions,
+    timeoutMs = COMMAND_TIMEOUT_MS,
   ): Promise<CommandResult> {
-    return this.#runner(command, arguments_, COMMAND_TIMEOUT_MS, options);
+    return this.#runner(command, arguments_, timeoutMs, options);
   }
 
   #runElevated(command: string, arguments_: string[]): Promise<CommandResult> {

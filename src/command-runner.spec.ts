@@ -63,7 +63,7 @@ describe('command runner', function describeCommandRunner() {
     expect(childProcessMocks.spawn).not.toHaveBeenCalled();
   });
 
-  it('allocates a macOS PTY for interactive commands', async function testMacosCommand() {
+  it('inherits terminal streams directly on macOS', async function testMacosCommand() {
     setTerminalAvailability(true);
     vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
     const child = new EventEmitter();
@@ -76,14 +76,10 @@ describe('command runner', function describeCommandRunner() {
     child.emit('close', 0, null);
 
     await expect(result).resolves.toEqual({ stdout: '', stderr: '' });
-    expect(childProcessMocks.spawn).toHaveBeenCalledWith(
-      '/usr/bin/script',
-      ['-q', '/dev/null', 'sudo', '--', 'true'],
-      {
-        stdio: 'inherit',
-        timeout: 30_000,
-      },
-    );
+    expect(childProcessMocks.spawn).toHaveBeenCalledWith('sudo', ['--', 'true'], {
+      stdio: 'inherit',
+      timeout: 30_000,
+    });
     expect(childProcessMocks.execFile).not.toHaveBeenCalled();
   });
 

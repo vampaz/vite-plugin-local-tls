@@ -60,6 +60,10 @@ jobs:
 
       - run: npm ci
 
+      - name: Validate native macOS authorization script
+        if: runner.os == 'macOS'
+        run: npm run test -- src/service-install-macos.spec.ts
+
       - run: npm run build
 
       - name: Install, probe, and remove the platform startup service

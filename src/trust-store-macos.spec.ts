@@ -82,6 +82,12 @@ describe('macOS trust store', () => {
         '/Users/test/Library/Keychains/login.keychain-db',
         certificatePath,
       ],
+      timeoutMs: 0,
+    });
+    expect(calls.find(({ arguments_ }) => arguments_[0] === 'delete-certificate')).toMatchObject({
+      timeoutMs: 0,
+    });
+    expect(calls.find(({ arguments_ }) => arguments_[0] === 'find-certificate')).toMatchObject({
       timeoutMs: 30_000,
     });
     expect(calls.some(({ arguments_ }) => arguments_[0] === 'trust-settings-export')).toBe(true);

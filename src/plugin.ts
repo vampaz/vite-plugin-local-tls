@@ -54,23 +54,24 @@ function createConfig(
 }
 
 function createDefaultDependencies(): PluginRuntimeDependencies {
+  const logger: PluginRuntimeDependencies['logger'] = {
+    info(message): void {
+      console.log(message);
+    },
+    warn(message): void {
+      console.warn(message);
+    },
+    error(message, error): void {
+      if (error === undefined) {
+        console.error(message);
+      } else {
+        console.error(message, error);
+      }
+    },
+  };
   return {
     platform: process.platform,
-    logger: {
-      info(message): void {
-        console.log(message);
-      },
-      warn(message): void {
-        console.warn(message);
-      },
-      error(message, error): void {
-        if (error === undefined) {
-          console.error(message);
-        } else {
-          console.error(message, error);
-        }
-      },
-    },
+    logger,
     createControlClient(options): PluginControlClient {
       return new ControlClient(options);
     },
@@ -97,6 +98,11 @@ function createDefaultDependencies(): PluginRuntimeDependencies {
         controlSocket: request.controlSocket,
       };
       return service.autoStart({
+        onAuthorizationWait(): void {
+          logger.info(
+            'Waiting for another Vite process to finish local TLS administrator authorization...',
+          );
+        },
         async isTrusted(): Promise<boolean> {
           return (await trustStore.verify()).trusted;
         },
@@ -368,6 +374,10 @@ function createPlugin(
         }
         let lastError: unknown = disconnectError;
         for (let attempt = 0; attempt < 3 && !shuttingDown; attempt += 1) {
+          const activeRoutes = routeInputs.filter(({ hostname }) => ownedHostnames.has(hostname));
+          if (activeRoutes.length === 0) {
+            return;
+          }
           let candidate: PluginControlClient | null = null;
           try {
             await dependencies.ensureInfrastructure({
@@ -375,20 +385,22 @@ function createPlugin(
               paths,
               controlSocket: options.controlSocket,
             });
-            const activeRoutes = routeInputs.filter(({ hostname }) => ownedHostnames.has(hostname));
-            if (activeRoutes.length === 0) {
+            const recoverableRoutes = routeInputs.filter(({ hostname }) =>
+              ownedHostnames.has(hostname),
+            );
+            if (recoverableRoutes.length === 0) {
               return;
             }
             candidate = createControlClient();
             await candidate.connect();
-            await candidate.register(activeRoutes);
+            await candidate.register(recoverableRoutes);
             if (shuttingDown) {
               await candidate.close();
               return;
             }
             client = candidate;
             dependencies.logger.info(
-              `Recovered local TLS routes for ${activeRoutes.map(({ hostname }) => hostname).join(', ')}.`,
+              `Recovered local TLS routes for ${recoverableRoutes.map(({ hostname }) => hostname).join(', ')}.`,
             );
             startHeartbeat();
             return;
