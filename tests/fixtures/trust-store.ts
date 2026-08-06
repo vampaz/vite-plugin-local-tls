@@ -1,7 +1,13 @@
 import type { CertificateAuthorityRecord } from '../../src/interfaces/certificate-record.js';
+import type { CommandExecutionOptions } from '../../src/interfaces/command-execution-options.js';
 import type { CommandResult, CommandRunner } from '../../src/interfaces/trust-store-options.js';
 
-export type RecordedCommand = { command: string; arguments_: string[]; timeoutMs: number };
+export type RecordedCommand = {
+  command: string;
+  arguments_: string[];
+  timeoutMs: number;
+  options?: CommandExecutionOptions;
+};
 
 export function createAuthority(
   certificatePath: string,
@@ -26,8 +32,9 @@ export function createRecordingRunner(
     command: string,
     arguments_: string[],
     timeoutMs: number,
+    options?: CommandExecutionOptions,
   ): Promise<CommandResult> {
-    calls.push({ command, arguments_, timeoutMs });
+    calls.push({ command, arguments_, timeoutMs, options });
     return handle(command, arguments_);
   }
   return { calls, runner };

@@ -9,17 +9,17 @@ const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
 const cliPath = path.join(repositoryRoot, 'dist', 'cli.js');
 const namespace = `platform-smoke-${process.pid}`;
 
-function runCli(arguments_) {
+function runCli(arguments_, interactive = false) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [cliPath, ...arguments_, '--namespace', namespace], {
       cwd: repositoryRoot,
       env: process.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: interactive ? 'inherit' : ['ignore', 'pipe', 'pipe'],
     });
     const output = [];
     const errors = [];
-    child.stdout.on('data', (chunk) => output.push(Buffer.from(chunk)));
-    child.stderr.on('data', (chunk) => errors.push(Buffer.from(chunk)));
+    child.stdout?.on('data', (chunk) => output.push(Buffer.from(chunk)));
+    child.stderr?.on('data', (chunk) => errors.push(Buffer.from(chunk)));
     child.once('error', reject);
     child.once('exit', (code) => {
       const stdout = Buffer.concat(output).toString();
@@ -118,7 +118,7 @@ async function waitForRunningService() {
   );
 }
 
-function verifyTlsListener() {
+function connectToTlsListener() {
   return new Promise((resolve, reject) => {
     const socket = connect(
       {
@@ -129,12 +129,12 @@ function verifyTlsListener() {
       },
       () => {
         const certificate = socket.getPeerCertificate();
-        socket.end();
         if (!certificate.raw) {
+          socket.destroy();
           reject(new Error('The service listener did not present a TLS certificate.'));
           return;
         }
-        resolve();
+        resolve(socket);
       },
     );
     socket.once('error', reject);
@@ -142,18 +142,36 @@ function verifyTlsListener() {
 }
 
 let installed = false;
+let activeConnection = null;
 try {
-  await runCli(['service', 'install']);
+  await runCli(['service', 'install'], true);
   installed = true;
-  const status = await waitForRunningService();
-  await verifyTlsListener();
-  if (status.state.namespace !== namespace) {
-    throw new Error(`Service namespace mismatch: ${JSON.stringify(status)}`);
+  const firstStatus = await waitForRunningService();
+  activeConnection = await connectToTlsListener();
+  activeConnection.on('error', () => undefined);
+  if (firstStatus.state.namespace !== namespace) {
+    throw new Error(`Service namespace mismatch: ${JSON.stringify(firstStatus)}`);
   }
-  console.log(`Verified port-443 startup service on ${process.platform}.`);
+  if (process.platform === 'darwin') {
+    await runCli(['service', 'install'], true);
+    const replacementStatus = await waitForRunningService();
+    const replacementConnection = await connectToTlsListener();
+    replacementConnection.destroy();
+    if (replacementStatus.state.pid === firstStatus.state.pid) {
+      throw new Error(
+        `macOS service replacement reused the old process: ${JSON.stringify(replacementStatus)}`,
+      );
+    }
+  }
+  console.log(
+    process.platform === 'darwin'
+      ? 'Verified port-443 startup service installation and live-connection replacement on macOS.'
+      : `Verified port-443 startup service installation on ${process.platform}.`,
+  );
 } finally {
+  activeConnection?.destroy();
   if (installed) {
-    await runCli(['service', 'uninstall']).catch((error) => {
+    await runCli(['service', 'uninstall'], true).catch((error) => {
       console.error(error);
       process.exitCode = 1;
     });

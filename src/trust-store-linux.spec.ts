@@ -78,4 +78,42 @@ describe('Linux trust stores', () => {
     expect(calls.some(({ arguments_ }) => arguments_.includes('--store'))).toBe(true);
     expect(calls.some(({ arguments_ }) => arguments_.includes('--remove'))).toBe(true);
   });
+
+  it('runs every sudo trust operation with terminal access', async () => {
+    const authority = createAuthority('/home/test/.local/ca.pem');
+    let trusted = false;
+    const { calls, runner } = createRecordingRunner((command, arguments_) => {
+      if (command === 'sudo' && arguments_.includes('install')) {
+        trusted = true;
+      }
+      if (command === 'sudo' && arguments_.includes('rm')) {
+        trusted = false;
+      }
+      return {
+        stdout: command === '/usr/bin/openssl' && trusted ? authority.fingerprint : '',
+        stderr: '',
+      };
+    });
+    const store = new TrustStore({
+      authority,
+      requirements: {
+        platform: 'linux',
+        isWsl: false,
+        opensslPath: '/usr/bin/openssl',
+        gitPath: '/usr/bin/git',
+        trustTool: 'update-ca-certificates',
+        trustToolPath: '/usr/bin/update-ca-certificates',
+        missing: [],
+      },
+      runner,
+      useSudo: true,
+    });
+
+    await expect(store.install()).resolves.toMatchObject({ trusted: true });
+    await expect(store.remove()).resolves.toMatchObject({ trusted: false });
+
+    const sudoCalls = calls.filter(({ command }) => command === 'sudo');
+    expect(sudoCalls.length).toBeGreaterThan(0);
+    expect(sudoCalls.every(({ options }) => options?.interactive === true)).toBe(true);
+  });
 });

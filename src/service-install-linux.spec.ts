@@ -2,8 +2,13 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CommandExecutionOptions } from './interfaces/command-execution-options.js';
 import type { StatePaths } from './interfaces/state-paths.js';
-import { installStartupService, uninstallStartupService } from './service-install.js';
+import {
+  installStartupService,
+  isStartupServiceCurrent,
+  uninstallStartupService,
+} from './service-install.js';
 
 let temporaryDirectory: string;
 
@@ -35,13 +40,15 @@ afterEach(async () => {
 describe('Linux startup service', () => {
   it('runs as the installing user with only the low-port binding capability', async () => {
     let installedDefinition = '';
-    const runner = vi.fn(async (_command: string, arguments_: string[]) => {
-      const temporaryPath = arguments_.find((argument) => argument.endsWith('.service.tmp'));
-      if (temporaryPath) {
-        installedDefinition = await readFile(temporaryPath, 'utf8');
-      }
-      return { stdout: '', stderr: '' };
-    });
+    const runner = vi.fn(
+      async (_command: string, arguments_: string[], _options?: CommandExecutionOptions) => {
+        const temporaryPath = arguments_.find((argument) => argument.endsWith('.service.tmp'));
+        if (temporaryPath) {
+          installedDefinition = await readFile(temporaryPath, 'utf8');
+        }
+        return { stdout: '', stderr: '' };
+      },
+    );
     const options = {
       platform: 'linux' as const,
       namespace: 'test',
@@ -69,24 +76,53 @@ describe('Linux startup service', () => {
     expect(installedDefinition).toContain('service-runtime/node');
     expect(installedDefinition).toContain('service-runtime/cli-test.js');
     expect(installedDefinition).not.toContain('User=root');
-    expect(runner).toHaveBeenCalledWith('sudo', [
-      '--',
-      'systemctl',
-      'enable',
-      '--now',
-      'vite-local-tls-test.service',
-    ]);
+    expect(runner).toHaveBeenCalledWith(
+      'sudo',
+      ['--', 'systemctl', 'enable', '--now', 'vite-local-tls-test.service'],
+      {
+        interactive: true,
+      },
+    );
+    expect(
+      runner.mock.calls
+        .filter(([command]) => command === 'sudo')
+        .every(([, , commandOptions]) => commandOptions?.interactive === true),
+    ).toBe(true);
 
     await uninstallStartupService(options);
 
-    expect(runner).toHaveBeenCalledWith('sudo', [
-      '--',
-      'rm',
-      '-f',
-      '--',
-      result.record?.definitionPath,
-    ]);
+    expect(runner).toHaveBeenCalledWith(
+      'sudo',
+      ['--', 'rm', '-f', '--', result.record?.definitionPath],
+      {
+        interactive: true,
+      },
+    );
     expect(result.record?.nodePath).toContain('service-runtime/node');
+  });
+
+  it('detects when the installed service CLI differs from the current package', async () => {
+    const cliPath = path.join(temporaryDirectory, 'cli.js');
+    const options = {
+      platform: 'linux' as const,
+      namespace: 'test',
+      paths: statePaths(),
+      nodePath: process.execPath,
+      cliPath,
+      homeDirectory: '/home/carlos',
+      username: 'carlos',
+      definitionDirectory: path.join(temporaryDirectory, 'systemd'),
+      runner: vi.fn(async () => ({ stdout: '', stderr: '' })),
+      useSudo: true,
+    };
+    await writeFile(cliPath, "console.log('current');\n");
+    await installStartupService(options);
+
+    await expect(isStartupServiceCurrent(options)).resolves.toBe(true);
+
+    await writeFile(cliPath, "console.log('updated');\n");
+
+    await expect(isStartupServiceCurrent(options)).resolves.toBe(false);
   });
 
   it('rejects systemd directive injection through environment-derived values', async () => {

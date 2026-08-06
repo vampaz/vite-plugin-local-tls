@@ -9,6 +9,14 @@ import { getStatePaths } from './state-paths.js';
 let temporaryDirectory: string;
 let manager: CertificateManager;
 
+const EC_PUBLIC_KEY_OID = Buffer.from('06072a8648ce3d0201', 'hex');
+
+function usesNamedEcParameters(certificate: X509Certificate): boolean {
+  const publicKey = Buffer.from(certificate.publicKey.export({ type: 'spki', format: 'der' }));
+  const algorithmOffset = publicKey.indexOf(EC_PUBLIC_KEY_OID);
+  return algorithmOffset >= 0 && publicKey[algorithmOffset + EC_PUBLIC_KEY_OID.length] === 0x06;
+}
+
 beforeEach(async () => {
   temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'vite-local-tls-leaf-'));
   const registeredHostnames = new Set(['app.localhost']);
@@ -39,6 +47,21 @@ describe('exact-host certificates', () => {
       expect((await lstat(record.keyPath)).mode & 0o777).toBe(0o600);
     }
   });
+
+  it.skipIf(process.platform !== 'darwin')(
+    'uses named EC parameters with the macOS system OpenSSL',
+    async () => {
+      const nativeManager = new CertificateManager({
+        paths: getStatePaths('test', process.platform, { HOME: temporaryDirectory }),
+        opensslPath: '/usr/bin/openssl',
+        isHostnameRegistered: (hostname) => hostname === 'app.localhost',
+      });
+      const record = await nativeManager.ensureLeafCertificate('app.localhost');
+      const certificate = new X509Certificate(await readFile(record.certificatePath));
+
+      expect(usesNamedEcParameters(certificate)).toBe(true);
+    },
+  );
 
   it('deduplicates concurrent leaf generation and reuses the valid cache', async () => {
     const records = await Promise.all(
