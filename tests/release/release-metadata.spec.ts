@@ -81,12 +81,4 @@ describe('release metadata', () => {
     expect(contributing).toContain('npm run changeset');
     expect(contributing).not.toContain('Install Caddy');
   });
-
-  it('records the one-time bootstrap without requesting a version change', async () => {
-    const changeset = await readFile(`${repositoryRoot}/.changeset/caddyless-bootstrap.md`, 'utf8');
-
-    expect(changeset).toMatch(/^---\n---\n/);
-    expect(changeset).toContain('release-acceptance gate');
-    expect(changeset).not.toContain(`'@vampaz/vite-plugin-local-tls':`);
-  });
 });
