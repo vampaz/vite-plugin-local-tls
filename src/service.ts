@@ -480,6 +480,9 @@ export class LocalTlsService {
       return null;
     }
     const state = await readServiceState(this.#options.paths.stateFile);
+    if (!state && (await pathExists(this.#options.paths.lockPath))) {
+      return null;
+    }
     if (
       !state ||
       state.socketPath !== this.#options.paths.socketPath ||
