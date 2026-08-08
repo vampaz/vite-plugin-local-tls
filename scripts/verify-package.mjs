@@ -86,6 +86,67 @@ console.log('exports-ok');`,
   );
   requireValue(importCheck.stdout.trim() === 'exports-ok', 'Installed exports did not load.');
 
+  const detachedAuthorizationCheck = await run(
+    process.execPath,
+    [
+      '--input-type=module',
+      '--eval',
+      `import path from 'node:path';
+delete process.env.CI;
+Object.defineProperty(process, 'platform', { value: 'darwin' });
+if (process.stdin.isTTY || process.stdout.isTTY || process.stderr.isTTY) process.exit(1);
+const { LocalTlsService } = await import('${packageName}/testing');
+const directory = path.join(process.cwd(), 'detached-authorization');
+const state = {
+  version: 1,
+  pid: 123,
+  namespace: 'test',
+  socketPath: path.join(directory, 'runtime', 'control.sock'),
+  startedAt: '2026-01-01T00:00:00.000Z',
+  protocolVersion: 1,
+  port: 443,
+  caFingerprint: 'fingerprint',
+};
+const service = new LocalTlsService({
+  namespace: 'test',
+  opensslPath: 'openssl',
+  paths: {
+    stateDirectory: path.join(directory, 'state'),
+    runtimeDirectory: path.join(directory, 'runtime'),
+    socketPath: state.socketPath,
+    lockPath: path.join(directory, 'runtime', 'startup.lock'),
+    stateFile: path.join(directory, 'state', 'service.json'),
+    certificateDirectory: path.join(directory, 'state', 'certificates'),
+    importedCertificateDirectory: path.join(directory, 'state', 'imported'),
+    caKeyPath: path.join(directory, 'state', 'ca-key.pem'),
+    caCertificatePath: path.join(directory, 'state', 'ca.pem'),
+    caStatePath: path.join(directory, 'state', 'ca.json'),
+  },
+});
+service.ensureRunning = async function ensureRunning() {
+  throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+};
+service.status = async function status() {
+  return { running: true, activeRoutes: 0, protocolVersion: 1, compatible: true, state };
+};
+let installCalls = 0;
+const result = await service.autoStart({
+  isTrusted: async () => true,
+  trust: async () => undefined,
+  installService: async () => {
+    installCalls += 1;
+  },
+});
+if (result !== state || installCalls !== 1) process.exit(1);
+console.log('detached-authorization-ok');`,
+    ],
+    temporaryDirectory,
+  );
+  requireValue(
+    detachedAuthorizationCheck.stdout.trim() === 'detached-authorization-ok',
+    'Installed package blocked macOS authorization without terminal streams.',
+  );
+
   const cliPath = path.join(
     temporaryDirectory,
     'node_modules',

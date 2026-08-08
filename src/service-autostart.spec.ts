@@ -2,7 +2,10 @@ import { rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { CommandExecutionOptions } from './interfaces/command-execution-options.js';
 import type { ServiceState } from './interfaces/service-state.js';
+import type { StatePaths } from './interfaces/state-paths.js';
+import { installStartupService } from './service-install.js';
 import { LocalTlsService } from './service.js';
 
 const state: ServiceState = {
@@ -19,6 +22,21 @@ const state: ServiceState = {
 const temporaryDirectories = new Set<string>();
 let serviceSequence = 0;
 
+function createStatePaths(directory: string): StatePaths {
+  return {
+    stateDirectory: path.join(directory, 'state'),
+    runtimeDirectory: path.join(directory, 'runtime'),
+    socketPath: path.join(directory, 'runtime', 'control.sock'),
+    lockPath: path.join(directory, 'runtime', 'startup.lock'),
+    stateFile: path.join(directory, 'state', 'service.json'),
+    certificateDirectory: path.join(directory, 'state', 'certificates'),
+    importedCertificateDirectory: path.join(directory, 'state', 'imported'),
+    caKeyPath: path.join(directory, 'state', 'ca-key.pem'),
+    caCertificatePath: path.join(directory, 'state', 'ca.pem'),
+    caStatePath: path.join(directory, 'state', 'ca.json'),
+  };
+}
+
 function createService(temporaryDirectory?: string): LocalTlsService {
   const directory =
     temporaryDirectory ??
@@ -27,18 +45,7 @@ function createService(temporaryDirectory?: string): LocalTlsService {
   return new LocalTlsService({
     namespace: 'test',
     opensslPath: 'openssl',
-    paths: {
-      stateDirectory: path.join(directory, 'state'),
-      runtimeDirectory: path.join(directory, 'runtime'),
-      socketPath: path.join(directory, 'runtime', 'control.sock'),
-      lockPath: path.join(directory, 'runtime', 'startup.lock'),
-      stateFile: path.join(directory, 'state', 'service.json'),
-      certificateDirectory: path.join(directory, 'state', 'certificates'),
-      importedCertificateDirectory: path.join(directory, 'state', 'imported'),
-      caKeyPath: path.join(directory, 'state', 'ca-key.pem'),
-      caCertificatePath: path.join(directory, 'state', 'ca.pem'),
-      caStatePath: path.join(directory, 'state', 'ca.json'),
-    },
+    paths: createStatePaths(directory),
   });
 }
 
@@ -138,7 +145,7 @@ describe('local TLS service auto-start', () => {
       }),
     ).rejects.toMatchObject({
       code: 'SERVICE_UPDATE_REQUIRED',
-      message: expect.stringContaining('vite-local-tls service install'),
+      message: expect.stringContaining('npm exec -- vite-local-tls service install'),
     });
     expect(installService).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();
@@ -157,7 +164,7 @@ describe('local TLS service auto-start', () => {
       }),
     ).rejects.toMatchObject({
       code: 'TRUST_REQUIRED',
-      message: expect.stringContaining('vite-local-tls trust'),
+      message: expect.stringContaining('npm exec -- vite-local-tls trust'),
     });
     expect(start).not.toHaveBeenCalled();
   });
@@ -217,8 +224,80 @@ describe('local TLS service auto-start', () => {
       }),
     ).rejects.toMatchObject({
       code: 'SERVICE_INSTALL_REQUIRED',
-      message: expect.stringContaining('vite-local-tls service install'),
+      message: expect.stringContaining('npm exec -- vite-local-tls service install'),
     });
+  });
+
+  it('routes background macOS startup through native graphical authorization', async () => {
+    const streams = [process.stdin, process.stdout, process.stderr];
+    const descriptors = streams.map((stream) => Object.getOwnPropertyDescriptor(stream, 'isTTY'));
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    vi.stubEnv('CI', '');
+    for (const stream of streams) {
+      Object.defineProperty(stream, 'isTTY', { configurable: true, value: false });
+    }
+    try {
+      const directory = path.join(
+        os.tmpdir(),
+        `vite-local-tls-autostart-macos-background-${process.pid}`,
+      );
+      const paths = createStatePaths(directory);
+      const service = createService(directory);
+      vi.spyOn(service, 'ensureRunning').mockRejectedValue(codedError('EACCES'));
+      vi.spyOn(service, 'status').mockResolvedValue({
+        running: true,
+        activeRoutes: 0,
+        protocolVersion: 1,
+        compatible: true,
+        state,
+      });
+      const runner = vi.fn(
+        async (_command: string, _arguments: string[], _options?: CommandExecutionOptions) => ({
+          stdout: '',
+          stderr: '',
+        }),
+      );
+      const installService = vi.fn(async () => {
+        await installStartupService({
+          platform: 'darwin',
+          namespace: 'test',
+          paths,
+          nodePath: '/opt/homebrew/bin/node',
+          cliPath: '/project/dist/cli.js',
+          homeDirectory: directory,
+          uid: 501,
+          username: 'developer',
+          definitionDirectory: path.join(directory, 'Library', 'LaunchDaemons'),
+          runtimeInstallDirectory: path.join(directory, 'system-runtime'),
+          runner,
+        });
+      });
+
+      await expect(
+        service.autoStart({
+          isTrusted: async () => true,
+          trust: async () => undefined,
+          installService,
+        }),
+      ).resolves.toBe(state);
+      expect(installService).toHaveBeenCalledOnce();
+      expect(runner).toHaveBeenCalledOnce();
+      expect(runner).toHaveBeenCalledWith('/usr/bin/osascript', expect.any(Array));
+      expect(runner.mock.calls[0]?.[1]).toContain(
+        'do shell script (commandPath & " --input-type=module --eval " & source & " " & requests) with administrator privileges with prompt "Vite Local TLS needs permission to install or update its local HTTPS service."',
+      );
+    } finally {
+      platform.mockRestore();
+      vi.unstubAllEnvs();
+      streams.forEach((stream, index) => {
+        const descriptor = descriptors[index];
+        if (descriptor) {
+          Object.defineProperty(stream, 'isTTY', descriptor);
+        } else {
+          Reflect.deleteProperty(stream, 'isTTY');
+        }
+      });
+    }
   });
 
   it('never attempts service authorization in CI, even when terminal streams are TTYs', async () => {
