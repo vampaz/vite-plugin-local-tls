@@ -1,5 +1,12 @@
 # @vampaz/vite-plugin-local-tls
 
+## 0.0.4
+
+### Patch Changes
+
+- 8fae06e: Wait for startup state metadata when another process reaches a healthy control socket before its atomic state write completes.
+- 25073aa: Allow background macOS dev servers to open the native administrator dialog during automatic local TLS service setup, and print npm-executable recovery commands when manual intervention is required.
+
 ## 0.0.3
 
 ### Patch Changes
