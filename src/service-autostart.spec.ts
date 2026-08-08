@@ -232,6 +232,7 @@ describe('local TLS service auto-start', () => {
     const streams = [process.stdin, process.stdout, process.stderr];
     const descriptors = streams.map((stream) => Object.getOwnPropertyDescriptor(stream, 'isTTY'));
     const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    vi.stubEnv('CI', '');
     for (const stream of streams) {
       Object.defineProperty(stream, 'isTTY', { configurable: true, value: false });
     }
@@ -287,6 +288,7 @@ describe('local TLS service auto-start', () => {
       );
     } finally {
       platform.mockRestore();
+      vi.unstubAllEnvs();
       streams.forEach((stream, index) => {
         const descriptor = descriptors[index];
         if (descriptor) {
