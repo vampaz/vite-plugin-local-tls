@@ -1,4 +1,4 @@
-import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, rm, unlink, writeFile } from 'node:fs/promises';
 import { createServer, type Server, type Socket } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,6 +17,10 @@ const unrelatedSockets = new Set<Socket>();
 
 function closeServer(server: Server): Promise<void> {
   return new Promise((resolve) => server.close(() => resolve()));
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 beforeEach(async () => {
@@ -77,6 +81,34 @@ describe('LocalTlsService', () => {
     expect(starts).toBe(1);
     expect(new Set(states.map((state) => state.startedAt)).size).toBe(1);
     expect(daemon?.registry.size).toBe(6);
+  });
+
+  it('waits for state metadata while a locked daemon startup becomes healthy', async () => {
+    const paths = getStatePaths(namespace, process.platform, { HOME: temporaryDirectory });
+    daemon = new LocalTlsDaemon({ paths, opensslPath: 'openssl', namespace, port: 0 });
+    const expected = await daemon.start();
+    await unlink(paths.stateFile);
+    await writeFile(
+      paths.lockPath,
+      `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`,
+    );
+    const service = new LocalTlsService({
+      paths,
+      opensslPath: 'openssl',
+      namespace,
+      startupTimeoutMs: 1000,
+      retryDelayMs: 10,
+    });
+
+    const outcome = service.ensureRunning().then(
+      (state) => ({ state }),
+      (error: unknown) => ({ error }),
+    );
+    await delay(100);
+    await writeFile(paths.stateFile, `${JSON.stringify(expected)}\n`);
+    await unlink(paths.lockPath);
+
+    await expect(outcome).resolves.toEqual({ state: expected });
   });
 
   it('replaces stale metadata and a lock owned by a dead process', async () => {
