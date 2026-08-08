@@ -344,7 +344,9 @@ function createDefaultCliActions(): CliActions {
         const requirements = inspectSystemRequirements();
         const status = await new TrustStore({ requirements, authority }).verify();
         if (status.trusted) {
-          throw new Error('Run `vite-local-tls untrust` before `vite-local-tls clean --ca`.');
+          throw new Error(
+            'Run `npm exec -- vite-local-tls untrust` before `npm exec -- vite-local-tls clean --ca`.',
+          );
         }
       }
       await Promise.all(

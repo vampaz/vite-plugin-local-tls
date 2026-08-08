@@ -174,7 +174,7 @@ export class TrustStore {
     const status = await this.verify();
     if (status.trusted) {
       throw new Error(
-        'The exact local CA fingerprint is still trusted; retry `vite-local-tls untrust`.',
+        'The exact local CA fingerprint is still trusted; retry `npm exec -- vite-local-tls untrust`.',
       );
     }
     return status;
@@ -222,7 +222,7 @@ export class TrustStore {
       );
     } catch (error) {
       throw new Error(
-        `The CA file was removed from ${target}, but the trust store refresh failed. Retry \`vite-local-tls untrust\`.`,
+        `The CA file was removed from ${target}, but the trust store refresh failed. Retry \`npm exec -- vite-local-tls untrust\`.`,
         { cause: error },
       );
     }

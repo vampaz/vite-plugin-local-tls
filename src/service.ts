@@ -323,13 +323,15 @@ export class LocalTlsService {
     const interactive =
       options.interactive ??
       Boolean(
-        process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY && !process.env.CI,
+        !process.env.CI &&
+        (process.platform === 'darwin' ||
+          (process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY)),
       );
     if (!(await options.isTrusted())) {
       if (!interactive) {
         throw new ServiceCoordinationError(
           'TRUST_REQUIRED',
-          'The local certificate authority is not trusted. Run `vite-local-tls trust` in an interactive terminal.',
+          'The local certificate authority is not trusted. Run `npm exec -- vite-local-tls trust` in an interactive terminal.',
         );
       }
       await this.#withAuthorizationLock(async () => {
@@ -340,7 +342,7 @@ export class LocalTlsService {
         if (!(await options.isTrusted())) {
           throw new ServiceCoordinationError(
             'TRUST_FAILED',
-            'The local certificate authority is still untrusted after `vite-local-tls trust`.',
+            'The local certificate authority is still untrusted after `npm exec -- vite-local-tls trust`.',
           );
         }
       }, options.onAuthorizationWait);
@@ -350,7 +352,7 @@ export class LocalTlsService {
       if (!interactive) {
         throw new ServiceCoordinationError(
           'SERVICE_UPDATE_REQUIRED',
-          'The installed local TLS service is outdated. Run `vite-local-tls service install` in an interactive terminal.',
+          'The installed local TLS service is outdated. Run `npm exec -- vite-local-tls service install` in an interactive terminal.',
         );
       }
       return this.#withAuthorizationLock(async () => {
@@ -377,7 +379,7 @@ export class LocalTlsService {
       if (!interactive) {
         throw new ServiceCoordinationError(
           'SERVICE_INSTALL_REQUIRED',
-          'Port 443 requires the startup service. Run `vite-local-tls service install` in an interactive terminal.',
+          'Port 443 requires the startup service. Run `npm exec -- vite-local-tls service install` in an interactive terminal.',
         );
       }
       return this.#withAuthorizationLock(async () => {
