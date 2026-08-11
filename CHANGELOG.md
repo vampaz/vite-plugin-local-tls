@@ -1,5 +1,11 @@
 # @vampaz/vite-plugin-local-tls
 
+## 0.0.5
+
+### Patch Changes
+
+- a4c6eed: Stage the macOS service CLI outside privacy-protected project folders before native administrator authorization.
+
 ## 0.0.4
 
 ### Patch Changes
