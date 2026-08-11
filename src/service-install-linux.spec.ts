@@ -4,11 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CommandExecutionOptions } from './interfaces/command-execution-options.js';
 import type { StatePaths } from './interfaces/state-paths.js';
-import {
-  installStartupService,
-  isStartupServiceCurrent,
-  uninstallStartupService,
-} from './service-install.js';
+import { installStartupService, uninstallStartupService } from './service-install.js';
 
 let temporaryDirectory: string;
 
@@ -99,30 +95,6 @@ describe('Linux startup service', () => {
       },
     );
     expect(result.record?.nodePath).toContain('service-runtime/node');
-  });
-
-  it('detects when the installed service CLI differs from the current package', async () => {
-    const cliPath = path.join(temporaryDirectory, 'cli.js');
-    const options = {
-      platform: 'linux' as const,
-      namespace: 'test',
-      paths: statePaths(),
-      nodePath: process.execPath,
-      cliPath,
-      homeDirectory: '/home/carlos',
-      username: 'carlos',
-      definitionDirectory: path.join(temporaryDirectory, 'systemd'),
-      runner: vi.fn(async () => ({ stdout: '', stderr: '' })),
-      useSudo: true,
-    };
-    await writeFile(cliPath, "console.log('current');\n");
-    await installStartupService(options);
-
-    await expect(isStartupServiceCurrent(options)).resolves.toBe(true);
-
-    await writeFile(cliPath, "console.log('updated');\n");
-
-    await expect(isStartupServiceCurrent(options)).resolves.toBe(false);
   });
 
   it('rejects systemd directive injection through environment-derived values', async () => {

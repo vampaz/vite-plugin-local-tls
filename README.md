@@ -47,7 +47,7 @@ Local TLS upstream: http://127.0.0.1:5173
 Local TLS URL: https://<repo>.<branch>.localhost
 ```
 
-The first run may request administrator authorization to trust the local certificate authority and install the service that binds port 443. On macOS, service installation or updates use a native administrator dialog, including when the dev server starts in the background. If several Vite processes start together, they wait for the same authorization flow instead of opening competing prompts.
+The first run may request administrator authorization to trust the local certificate authority and install the service that binds port 443. On macOS, service installation uses a native administrator dialog, including when the dev server starts in the background. If several Vite processes start together, they wait for the same authorization flow instead of opening competing prompts. Starting Vite never replaces a healthy compatible service; update it explicitly with `npm exec -- vite-local-tls service install`.
 
 The same configuration supports Vite preview (`vite preview`); the route is registered after Vite selects the preview port.
 

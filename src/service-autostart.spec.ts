@@ -62,94 +62,26 @@ function codedError(code: string): Error {
 }
 
 describe('local TLS service auto-start', () => {
-  it('starts directly when trust and port 443 are already available', async () => {
-    const service = createService();
-    vi.spyOn(service, 'ensureRunning').mockResolvedValue(state);
-    const trust = vi.fn(async () => undefined);
-    const installService = vi.fn(async () => undefined);
+  it.each([true, false])(
+    'uses a healthy service without invoking the installer (interactive=%s)',
+    async (interactive) => {
+      const service = createService();
+      vi.spyOn(service, 'ensureRunning').mockResolvedValue(state);
+      const trust = vi.fn(async () => undefined);
+      const installService = vi.fn(async () => undefined);
 
-    await expect(
-      service.autoStart({
-        interactive: true,
-        isTrusted: async () => true,
-        trust,
-        installService,
-      }),
-    ).resolves.toBe(state);
-    expect(trust).not.toHaveBeenCalled();
-    expect(installService).not.toHaveBeenCalled();
-  });
-
-  it('updates a stale installed service before registering a route', async () => {
-    const service = createService();
-    const start = vi.spyOn(service, 'ensureRunning');
-    vi.spyOn(service, 'status').mockResolvedValue({
-      running: true,
-      activeRoutes: 0,
-      protocolVersion: 1,
-      compatible: true,
-      state,
-    });
-    const installService = vi.fn(async () => undefined);
-
-    await expect(
-      service.autoStart({
-        interactive: true,
-        isTrusted: async () => true,
-        trust: async () => undefined,
-        isServiceCurrent: async () => false,
-        installService,
-      }),
-    ).resolves.toBe(state);
-    expect(installService).toHaveBeenCalledOnce();
-    expect(start).not.toHaveBeenCalled();
-  });
-
-  it('refuses to replace a stale service while another route is active', async () => {
-    const service = createService();
-    const start = vi.spyOn(service, 'ensureRunning');
-    vi.spyOn(service, 'status').mockResolvedValue({
-      running: true,
-      activeRoutes: 1,
-      protocolVersion: 1,
-      compatible: true,
-      state,
-    });
-    const installService = vi.fn(async () => undefined);
-
-    await expect(
-      service.autoStart({
-        interactive: true,
-        isTrusted: async () => true,
-        trust: async () => undefined,
-        isServiceCurrent: async () => false,
-        installService,
-      }),
-    ).rejects.toMatchObject({ code: 'SERVICE_UPDATE_ROUTES_ACTIVE' });
-    expect(installService).not.toHaveBeenCalled();
-    expect(start).not.toHaveBeenCalled();
-  });
-
-  it('requires an explicit service update outside an interactive terminal', async () => {
-    const service = createService();
-    const start = vi.spyOn(service, 'ensureRunning');
-    const installService = vi.fn(async () => undefined);
-
-    await expect(
-      service.autoStart({
-        interactive: false,
-        isTrusted: async () => true,
-        trust: async () => undefined,
-        isServiceCurrent: async () => false,
-        installService,
-      }),
-    ).rejects.toMatchObject({
-      code: 'SERVICE_UPDATE_REQUIRED',
-      message: expect.stringContaining('npm exec -- vite-local-tls service install'),
-    });
-    expect(installService).not.toHaveBeenCalled();
-    expect(start).not.toHaveBeenCalled();
-  });
+      await expect(
+        service.autoStart({
+          interactive,
+          isTrusted: async () => true,
+          trust,
+          installService,
+        }),
+      ).resolves.toBe(state);
+      expect(trust).not.toHaveBeenCalled();
+      expect(installService).not.toHaveBeenCalled();
+    },
+  );
 
   it('fails early with the exact trust command in non-interactive environments', async () => {
     const service = createService();

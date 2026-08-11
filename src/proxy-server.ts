@@ -201,17 +201,64 @@ function sendHttp2StreamDiagnostic(
   status: number,
   message: string,
 ): void {
-  if (stream.destroyed || stream.headersSent) {
-    stream.close();
+  if (stream.headersSent) {
+    closeHttp2Stream(stream);
     return;
   }
-  stream.respond({
-    ':status': status,
-    'content-type': 'text/plain; charset=utf-8',
-    'content-length': Buffer.byteLength(message),
-    'cache-control': 'no-store',
-  });
-  stream.end(message);
+  if (
+    respondHttp2Stream(stream, {
+      ':status': status,
+      'content-type': 'text/plain; charset=utf-8',
+      'content-length': Buffer.byteLength(message),
+      'cache-control': 'no-store',
+    })
+  ) {
+    endHttp2Stream(stream, message);
+  }
+}
+
+function runHttp2StreamOperation(stream: ServerHttp2Stream, operation: () => void): boolean {
+  if (stream.destroyed || stream.closed) {
+    return false;
+  }
+  try {
+    operation();
+    return true;
+  } catch {
+    stream.destroy();
+    return false;
+  }
+}
+
+function respondHttp2Stream(
+  stream: ServerHttp2Stream,
+  headers: OutgoingHttpHeaders,
+  waitForTrailers = false,
+): boolean {
+  if (stream.headersSent || stream.writableEnded) {
+    return false;
+  }
+  return runHttp2StreamOperation(stream, () =>
+    stream.respond(headers, waitForTrailers ? { waitForTrailers: true } : undefined),
+  );
+}
+
+function writeHttp2Stream(stream: ServerHttp2Stream, chunk: Buffer): boolean {
+  if (stream.writableEnded) {
+    return false;
+  }
+  return runHttp2StreamOperation(stream, () => void stream.write(chunk));
+}
+
+function endHttp2Stream(stream: ServerHttp2Stream, data?: string): void {
+  if (stream.writableEnded) {
+    return;
+  }
+  runHttp2StreamOperation(stream, () => stream.end(data));
+}
+
+function closeHttp2Stream(stream: ServerHttp2Stream): void {
+  runHttp2StreamOperation(stream, () => stream.close());
 }
 
 export class ProxyServer {
@@ -232,6 +279,8 @@ export class ProxyServer {
   }
 
   handleRequest(request: IncomingMessage, response: ServerResponse): void {
+    request.on('error', () => undefined);
+    response.on('error', () => undefined);
     if (request.headers[this.#options.proxyMarker] !== undefined) {
       sendDiagnostic(response, 508, 'Local TLS proxy loop detected.');
       return;
@@ -273,6 +322,7 @@ export class ProxyServer {
         response.end();
       });
       upstreamResponse.once('aborted', () => response.destroy());
+      upstreamResponse.once('error', (error) => response.destroy(error));
       response.once('close', () => upstreamResponse.destroy());
     });
     upstreamRequest.once('error', (error) => {
@@ -282,6 +332,8 @@ export class ProxyServer {
         response.destroy(error);
       }
     });
+    request.once('error', () => upstreamRequest.destroy());
+    response.once('error', () => upstreamRequest.destroy());
     request.pipe(upstreamRequest, { end: false });
     request.once('end', () => {
       if (Object.keys(request.trailers).length > 0) {
@@ -336,6 +388,7 @@ export class ProxyServer {
   }
 
   handleHttp2Stream(stream: ServerHttp2Stream, headers: IncomingHttpHeaders): void {
+    stream.on('error', () => undefined);
     const authority = getHeaderValue(headers[HTTP2.HTTP2_HEADER_AUTHORITY]);
     const hostname = getAuthorityHostname(authority);
     const route = hostname ? this.#options.registry.get(hostname) : undefined;
@@ -392,17 +445,19 @@ export class ProxyServer {
           responseHeaders[name] = upstreamResponse.headers[name];
         }
       }
-      if (!stream.headersSent) {
-        stream.respond(responseHeaders);
+      if (!respondHttp2Stream(stream, responseHeaders)) {
+        upstreamSocket.destroy();
+        return;
       }
-      if (upstreamHead.length > 0) {
-        stream.write(upstreamHead);
+      if (upstreamHead.length > 0 && !writeHttp2Stream(stream, upstreamHead)) {
+        upstreamSocket.destroy();
+        return;
       }
       upstreamSocket.pipe(stream);
       stream.pipe(upstreamSocket);
-      upstreamSocket.once('error', () => stream.close());
+      upstreamSocket.once('error', () => closeHttp2Stream(stream));
       stream.once('error', () => upstreamSocket.destroy());
-      upstreamSocket.once('close', () => stream.close());
+      upstreamSocket.once('close', () => closeHttp2Stream(stream));
       stream.once('close', () => upstreamSocket.destroy());
     });
     upstreamRequest.once('response', (upstreamResponse) => {
@@ -437,29 +492,39 @@ export class ProxyServer {
     upstreamRequest.once('response', (upstreamResponse) => {
       receivedResponse = true;
       let trailers: OutgoingHttpHeaders = {};
-      stream.respond(
-        {
-          ':status': upstreamResponse.statusCode ?? 502,
-          ...buildHttp2ResponseHeaders(upstreamResponse, route),
-        },
-        { waitForTrailers: true },
-      );
-      stream.once('wantTrailers', () => stream.sendTrailers(trailers));
+      if (
+        !respondHttp2Stream(
+          stream,
+          {
+            ':status': upstreamResponse.statusCode ?? 502,
+            ...buildHttp2ResponseHeaders(upstreamResponse, route),
+          },
+          true,
+        )
+      ) {
+        upstreamResponse.destroy();
+        return;
+      }
+      stream.once('wantTrailers', () => {
+        runHttp2StreamOperation(stream, () => stream.sendTrailers(trailers));
+      });
       upstreamResponse.pipe(stream, { end: false });
       upstreamResponse.once('end', () => {
         trailers = upstreamResponse.trailers;
-        stream.end();
+        endHttp2Stream(stream);
       });
-      upstreamResponse.once('aborted', () => stream.close());
+      upstreamResponse.once('aborted', () => closeHttp2Stream(stream));
+      upstreamResponse.once('error', () => closeHttp2Stream(stream));
       stream.once('close', () => upstreamResponse.destroy());
     });
     upstreamRequest.once('error', (error) => {
       if (!receivedResponse) {
         sendHttp2StreamDiagnostic(stream, 502, `Local upstream unavailable: ${error.message}`);
       } else {
-        stream.close();
+        closeHttp2Stream(stream);
       }
     });
+    stream.once('error', () => upstreamRequest.destroy());
     stream.pipe(upstreamRequest, { end: false });
     stream.once('end', () => upstreamRequest.end());
     stream.once('aborted', () => upstreamRequest.destroy());
@@ -502,15 +567,18 @@ export function createSecureProxyServer(
     },
   });
   server.on('secureConnection', (socket) => {
+    socket.on('error', () => undefined);
     if (socket.alpnProtocol === 'h2') {
       const session = performServerHandshake(socket, {
         settings: { ...options.settings, enableConnectProtocol: true },
       });
+      session.on('error', () => undefined);
       session.on('stream', proxy.handleHttp2Stream.bind(proxy));
       return;
     }
     http1Server.emit('connection', socket);
   });
+  server.on('tlsClientError', () => undefined);
   server.addContext = function addContext(
     hostname: string,
     context: CertificateContextOptions,
