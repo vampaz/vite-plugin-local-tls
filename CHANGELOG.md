@@ -1,5 +1,11 @@
 # @vampaz/vite-plugin-local-tls
 
+## 0.0.7
+
+### Patch Changes
+
+- ed14e99: Update an outdated compatible service automatically when it is idle while leaving active routes uninterrupted.
+
 ## 0.0.6
 
 ### Patch Changes
