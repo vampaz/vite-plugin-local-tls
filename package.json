@@ -1,6 +1,6 @@
 {
   "name": "@vampaz/vite-plugin-local-tls",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "Zero-dependency local HTTPS routing for concurrent Vite checkouts.",
   "keywords": [
     "https",
