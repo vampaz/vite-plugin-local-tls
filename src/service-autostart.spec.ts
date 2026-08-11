@@ -68,6 +68,7 @@ describe('local TLS service auto-start', () => {
       const service = createService();
       vi.spyOn(service, 'ensureRunning').mockResolvedValue(state);
       const trust = vi.fn(async () => undefined);
+      const isServiceCurrent = vi.fn(async () => true);
       const installService = vi.fn(async () => undefined);
 
       await expect(
@@ -75,13 +76,121 @@ describe('local TLS service auto-start', () => {
           interactive,
           isTrusted: async () => true,
           trust,
+          isServiceCurrent,
           installService,
         }),
       ).resolves.toBe(state);
       expect(trust).not.toHaveBeenCalled();
+      expect(isServiceCurrent).toHaveBeenCalledOnce();
       expect(installService).not.toHaveBeenCalled();
     },
   );
+
+  it('updates an outdated idle service before registering a route', async () => {
+    const service = createService();
+    const start = vi.spyOn(service, 'ensureRunning').mockResolvedValue(state);
+    vi.spyOn(service, 'status').mockResolvedValue({
+      running: true,
+      activeRoutes: 0,
+      protocolVersion: 1,
+      compatible: true,
+      state,
+    });
+    const installService = vi.fn(async () => undefined);
+
+    await expect(
+      service.autoStart({
+        interactive: true,
+        isTrusted: async () => true,
+        trust: async () => undefined,
+        isServiceCurrent: async () => false,
+        installService,
+      }),
+    ).resolves.toBe(state);
+    expect(installService).toHaveBeenCalledOnce();
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])(
+    'reuses an outdated compatible service while routes are active (interactive=%s)',
+    async (interactive) => {
+      const service = createService();
+      const start = vi.spyOn(service, 'ensureRunning').mockResolvedValue(state);
+      vi.spyOn(service, 'status').mockResolvedValue({
+        running: true,
+        activeRoutes: 2,
+        protocolVersion: 1,
+        compatible: true,
+        state,
+      });
+      const installService = vi.fn(async () => undefined);
+
+      await expect(
+        service.autoStart({
+          interactive,
+          isTrusted: async () => true,
+          trust: async () => undefined,
+          isServiceCurrent: async () => false,
+          installService,
+        }),
+      ).resolves.toBe(state);
+      expect(installService).not.toHaveBeenCalled();
+      expect(start).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('refuses to replace an outdated incompatible service while routes are active', async () => {
+    const service = createService();
+    const start = vi.spyOn(service, 'ensureRunning').mockResolvedValue(state);
+    vi.spyOn(service, 'status').mockResolvedValue({
+      running: true,
+      activeRoutes: 1,
+      protocolVersion: 0,
+      compatible: false,
+      state,
+    });
+    const installService = vi.fn(async () => undefined);
+
+    await expect(
+      service.autoStart({
+        interactive: true,
+        isTrusted: async () => true,
+        trust: async () => undefined,
+        isServiceCurrent: async () => false,
+        installService,
+      }),
+    ).rejects.toMatchObject({ code: 'SERVICE_UPDATE_ROUTES_ACTIVE' });
+    expect(installService).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('requires an explicit update for an outdated idle service when authorization is unavailable', async () => {
+    const service = createService();
+    const start = vi.spyOn(service, 'ensureRunning').mockResolvedValue(state);
+    vi.spyOn(service, 'status').mockResolvedValue({
+      running: true,
+      activeRoutes: 0,
+      protocolVersion: 1,
+      compatible: true,
+      state,
+    });
+    const installService = vi.fn(async () => undefined);
+
+    await expect(
+      service.autoStart({
+        interactive: false,
+        isTrusted: async () => true,
+        trust: async () => undefined,
+        isServiceCurrent: async () => false,
+        installService,
+      }),
+    ).rejects.toMatchObject({
+      code: 'SERVICE_UPDATE_REQUIRED',
+      message: expect.stringContaining('npm exec -- vite-local-tls service install'),
+    });
+    expect(installService).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+  });
 
   it('fails early with the exact trust command in non-interactive environments', async () => {
     const service = createService();
@@ -406,6 +515,56 @@ describe('local TLS service auto-start', () => {
       onAuthorizationWait,
       isTrusted: async () => true,
       trust: async () => undefined,
+      installService,
+    };
+
+    const firstStart = firstService.autoStart(options);
+    await vi.waitFor(() => expect(installService).toHaveBeenCalledOnce());
+    const secondStart = secondService.autoStart(options);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(installService).toHaveBeenCalledOnce();
+    finishInstall?.();
+    await expect(Promise.all([firstStart, secondStart])).resolves.toEqual([state, state]);
+    expect(installService).toHaveBeenCalledOnce();
+    expect(onAuthorizationWait).toHaveBeenCalledOnce();
+  });
+
+  it('serializes simultaneous updates of an outdated idle service', async () => {
+    const temporaryDirectory = path.join(
+      os.tmpdir(),
+      `vite-local-tls-autostart-shared-update-${process.pid}`,
+    );
+    const firstService = createService(temporaryDirectory);
+    const secondService = createService(temporaryDirectory);
+    for (const service of [firstService, secondService]) {
+      vi.spyOn(service, 'ensureRunning').mockResolvedValue(state);
+      vi.spyOn(service, 'status').mockResolvedValue({
+        running: true,
+        activeRoutes: 0,
+        protocolVersion: 1,
+        compatible: true,
+        state,
+      });
+    }
+    let current = false;
+    let finishInstall: (() => void) | undefined;
+    const installService = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishInstall = function resolveInstall() {
+            current = true;
+            resolve();
+          };
+        }),
+    );
+    const onAuthorizationWait = vi.fn();
+    const options = {
+      interactive: true,
+      onAuthorizationWait,
+      isTrusted: async () => true,
+      trust: async () => undefined,
+      isServiceCurrent: async () => current,
       installService,
     };
 

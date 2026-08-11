@@ -255,6 +255,25 @@ async function readRecord(
   }
 }
 
+export async function isStartupServiceCurrent(options: ServiceInstallOptions): Promise<boolean> {
+  const record = await readRecord(options);
+  if (!record) {
+    return true;
+  }
+  try {
+    const [currentCli, installedCli] = await Promise.all([
+      readFile(options.cliPath),
+      readFile(record.cliPath),
+    ]);
+    return currentCli.equals(installedCli);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return false;
+    }
+    throw error;
+  }
+}
+
 async function writeRecord(
   options: ServiceInstallOptions,
   record: ServiceInstallationRecord,
