@@ -3,5 +3,6 @@ export interface ServiceAutoStartOptions {
   onAuthorizationWait?: () => void;
   isTrusted: () => Promise<boolean>;
   trust: () => Promise<void>;
+  isServiceCurrent?: () => Promise<boolean>;
   installService: () => Promise<void>;
 }

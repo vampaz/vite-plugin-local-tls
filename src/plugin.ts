@@ -17,7 +17,7 @@ import type {
 } from './interfaces/plugin-runtime.js';
 import type { StatePaths } from './interfaces/state-paths.js';
 import { LocalTlsService } from './service.js';
-import { installStartupService } from './service-install.js';
+import { installStartupService, isStartupServiceCurrent } from './service-install.js';
 import { getStatePaths } from './state-paths.js';
 import { assertTlsSystemRequirements, inspectSystemRequirements } from './system-requirements.js';
 import { TrustStore } from './trust-store.js';
@@ -108,6 +108,9 @@ function createDefaultDependencies(): PluginRuntimeDependencies {
         },
         async trust(): Promise<void> {
           await trustStore.install();
+        },
+        async isServiceCurrent(): Promise<boolean> {
+          return isStartupServiceCurrent(serviceInstallOptions);
         },
         async installService(): Promise<void> {
           await installStartupService(serviceInstallOptions);

@@ -138,6 +138,16 @@ const result = await service.autoStart({
   },
 });
 if (result !== state || installCalls !== 1) process.exit(1);
+installCalls = 0;
+const updateResult = await service.autoStart({
+  isTrusted: async () => true,
+  trust: async () => undefined,
+  isServiceCurrent: async () => false,
+  installService: async () => {
+    installCalls += 1;
+  },
+});
+if (updateResult !== state || installCalls !== 1) process.exit(1);
 console.log('detached-authorization-ok');`,
     ],
     temporaryDirectory,

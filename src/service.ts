@@ -347,6 +347,42 @@ export class LocalTlsService {
         }
       }, options.onAuthorizationWait);
     }
+    const isServiceCurrent = options.isServiceCurrent;
+    if (isServiceCurrent && !(await isServiceCurrent())) {
+      const status = await this.status();
+      if (status.running && status.activeRoutes > 0) {
+        if (!status.compatible) {
+          throw new ServiceCoordinationError(
+            'SERVICE_UPDATE_ROUTES_ACTIVE',
+            `The installed local TLS service is incompatible, but ${status.activeRoutes} route(s) are active. Stop those Vite processes and start this project again.`,
+          );
+        }
+        return this.ensureRunning();
+      }
+      if (!interactive) {
+        throw new ServiceCoordinationError(
+          'SERVICE_UPDATE_REQUIRED',
+          'The installed local TLS service is outdated. Run `npm exec -- vite-local-tls service install` in an interactive terminal.',
+        );
+      }
+      return this.#withAuthorizationLock(async () => {
+        if (await isServiceCurrent()) {
+          return this.ensureRunning();
+        }
+        const coordinatedStatus = await this.status();
+        if (coordinatedStatus.running && coordinatedStatus.activeRoutes > 0) {
+          if (!coordinatedStatus.compatible) {
+            throw new ServiceCoordinationError(
+              'SERVICE_UPDATE_ROUTES_ACTIVE',
+              `The installed local TLS service is incompatible, but ${coordinatedStatus.activeRoutes} route(s) are active. Stop those Vite processes and start this project again.`,
+            );
+          }
+          return this.ensureRunning();
+        }
+        await options.installService();
+        return this.#waitForInstalledService(INSTALLED_SERVICE_START_TIMEOUT_MS);
+      }, options.onAuthorizationWait);
+    }
     try {
       return await this.ensureRunning();
     } catch (error) {

@@ -47,7 +47,7 @@ Local TLS upstream: http://127.0.0.1:5173
 Local TLS URL: https://<repo>.<branch>.localhost
 ```
 
-The first run may request administrator authorization to trust the local certificate authority and install the service that binds port 443. On macOS, service installation uses a native administrator dialog, including when the dev server starts in the background. If several Vite processes start together, they wait for the same authorization flow instead of opening competing prompts. Starting Vite never replaces a healthy compatible service; update it explicitly with `npm exec -- vite-local-tls service install`.
+The first run may request administrator authorization to trust the local certificate authority and install the service that binds port 443. On macOS, service installation and idle updates use a native administrator dialog, including when the dev server starts in the background. If several Vite processes start together, they wait for the same authorization flow instead of opening competing prompts. An outdated compatible service keeps serving active routes without interruption and updates automatically on the next Vite start after it becomes idle.
 
 The same configuration supports Vite preview (`vite preview`); the route is registered after Vite selects the preview port.
 
@@ -190,7 +190,7 @@ See [Security](./SECURITY.md) for the complete trust, network, service, and cont
 
 - Run `npm exec -- vite-local-tls doctor` first to inspect system requirements and service health.
 - On Linux, run Vite or lifecycle commands in an interactive terminal when administrator authorization is required. macOS uses a native administrator dialog even when the dev server starts in the background.
-- If an installed service is outdated, stop active Vite routes and run `npm exec -- vite-local-tls service install`.
+- If an idle service cannot update automatically because authorization is unavailable, stop active Vite routes and run `npm exec -- vite-local-tls service install` from an interactive terminal.
 - If port 443 is occupied, identify and stop or reconfigure that process yourself; the plugin will not terminate it.
 - If the wrong server owns a hostname, choose a unique `domain` or `instanceLabel`, or restart the intended server so it makes the latest claim.
 - If a custom non-local hostname fails with `internalTls: false`, import a matching certificate before starting Vite.
