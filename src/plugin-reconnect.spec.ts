@@ -272,15 +272,15 @@ describe('plugin daemon recovery', () => {
     expect(clients).toHaveLength(1);
   });
 
-  it('reports a prominent HTTPS and HMR failure after bounded recovery attempts', async () => {
+  it('keeps retrying until HTTPS and HMR routes recover', async () => {
     const clients: MockClient[] = [];
     const runtime = createRuntime((options) => {
       const client =
-        clients.length === 0
-          ? createClient(options)
-          : createClient(options, async () => {
+        clients.length > 0 && clients.length < 4
+          ? createClient(options, async () => {
               throw new Error('still unavailable');
-            });
+            })
+          : createClient(options);
       clients.push(client);
       return client;
     });
@@ -288,15 +288,13 @@ describe('plugin daemon recovery', () => {
     await vi.waitFor(() => expect(clients).toHaveLength(1));
 
     clients[0]?.options.onDisconnect?.(new Error('daemon stopped'));
-    await vi.waitFor(
-      () =>
-        expect(runtime.errors).toContain(
-          'Local TLS route recovery failed for failed.localhost; HTTPS and HMR over WSS are unavailable while the Vite server remains running.',
-        ),
-      { timeout: 1500 },
-    );
+    await vi.waitFor(() => expect(clients[4]?.register).toHaveBeenCalledOnce(), { timeout: 2000 });
 
-    expect(clients).toHaveLength(4);
-    expect(runtime.ensureInfrastructure).toHaveBeenCalledTimes(4);
+    expect(runtime.logs).toContain('Recovered local TLS routes for failed.localhost.');
+    expect(runtime.errors).toContain(
+      'Local TLS routes for failed.localhost are still unavailable; continuing to retry while the Vite server is running.',
+    );
+    expect(clients).toHaveLength(5);
+    expect(runtime.ensureInfrastructure).toHaveBeenCalledTimes(5);
   });
 });

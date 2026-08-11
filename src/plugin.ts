@@ -17,7 +17,7 @@ import type {
 } from './interfaces/plugin-runtime.js';
 import type { StatePaths } from './interfaces/state-paths.js';
 import { LocalTlsService } from './service.js';
-import { installStartupService, isStartupServiceCurrent } from './service-install.js';
+import { installStartupService } from './service-install.js';
 import { getStatePaths } from './state-paths.js';
 import { assertTlsSystemRequirements, inspectSystemRequirements } from './system-requirements.js';
 import { TrustStore } from './trust-store.js';
@@ -108,9 +108,6 @@ function createDefaultDependencies(): PluginRuntimeDependencies {
         },
         async trust(): Promise<void> {
           await trustStore.install();
-        },
-        async isServiceCurrent(): Promise<boolean> {
-          return isStartupServiceCurrent(serviceInstallOptions);
         },
         async installService(): Promise<void> {
           await installStartupService(serviceInstallOptions);
@@ -355,15 +352,15 @@ function createPlugin(
             `Lost local TLS route ownership for ${takeover.hostname}; a newer Vite server now owns that hostname.`,
           );
         },
-        onDisconnect(error): void {
+        onDisconnect(): void {
           if (!shuttingDown) {
-            void recoverRoutes(error);
+            void recoverRoutes();
           }
         },
       });
     }
 
-    async function recoverRoutes(disconnectError?: Error): Promise<void> {
+    async function recoverRoutes(): Promise<void> {
       if (recoveryPromise || shuttingDown) {
         return recoveryPromise ?? Promise.resolve();
       }
@@ -372,8 +369,8 @@ function createPlugin(
           clearInterval(heartbeat);
           heartbeat = null;
         }
-        let lastError: unknown = disconnectError;
-        for (let attempt = 0; attempt < 3 && !shuttingDown; attempt += 1) {
+        let attempt = 0;
+        while (!shuttingDown) {
           const activeRoutes = routeInputs.filter(({ hostname }) => ownedHostnames.has(hostname));
           if (activeRoutes.length === 0) {
             return;
@@ -405,18 +402,19 @@ function createPlugin(
             startHeartbeat();
             return;
           } catch (error) {
-            lastError = error;
+            attempt += 1;
             await candidate?.close().catch(() => undefined);
-            if (attempt < 2 && !shuttingDown) {
-              await delay(100 * 2 ** attempt);
+            if (shuttingDown) {
+              return;
             }
+            if (attempt === 3 || attempt % 12 === 0) {
+              dependencies.logger.error(
+                `Local TLS routes for ${[...ownedHostnames].join(', ')} are still unavailable; continuing to retry while the Vite server is running.`,
+                error,
+              );
+            }
+            await delay(Math.min(100 * 2 ** Math.min(attempt - 1, 4), 1600));
           }
-        }
-        if (!shuttingDown) {
-          dependencies.logger.error(
-            `Local TLS route recovery failed for ${[...ownedHostnames].join(', ')}; HTTPS and HMR over WSS are unavailable while the Vite server remains running.`,
-            lastError,
-          );
         }
       })().finally(() => {
         recoveryPromise = null;

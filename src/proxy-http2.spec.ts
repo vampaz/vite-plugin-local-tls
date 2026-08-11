@@ -1,6 +1,12 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
-import { connect, type ClientHttp2Session } from 'node:http2';
+import {
+  connect,
+  constants as HTTP2,
+  type ClientHttp2Session,
+  type IncomingHttpHeaders,
+  type ServerHttp2Stream,
+} from 'node:http2';
 import { get } from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,6 +19,14 @@ let temporaryDirectory: string;
 let backend: Server;
 let proxy: ReturnType<typeof createSecureProxyServer>;
 let client: ClientHttp2Session;
+let serverStream: ServerHttp2Stream | undefined;
+
+class CapturingProxyServer extends ProxyServer {
+  override handleHttp2Stream(stream: ServerHttp2Stream, headers: IncomingHttpHeaders): void {
+    serverStream = stream;
+    super.handleHttp2Stream(stream, headers);
+  }
+}
 
 function listen(server: Server | ReturnType<typeof createSecureProxyServer>): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -34,6 +48,7 @@ function close(server: Server | ReturnType<typeof createSecureProxyServer>): Pro
 }
 
 beforeEach(async () => {
+  serverStream = undefined;
   temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'vite-local-tls-http2-'));
   backend = createServer((request, response) => {
     response.statusCode = 206;
@@ -49,7 +64,7 @@ beforeEach(async () => {
     upstreamPort: backendPort,
   });
   const certificate = await createTestCertificate(temporaryDirectory);
-  proxy = createSecureProxyServer(new ProxyServer({ registry }), certificate);
+  proxy = createSecureProxyServer(new CapturingProxyServer({ registry }), certificate);
   const proxyPort = await listen(proxy);
   client = connect(`https://127.0.0.1:${proxyPort}`, { rejectUnauthorized: false });
 });
@@ -130,5 +145,63 @@ describe('HTTP/2 proxy', () => {
     });
 
     expect(result).toEqual({ status: 206, body: 'GET /http1 app.localhost' });
+  });
+
+  it('keeps serving after abrupt HTTP/2 stream and session resets', async () => {
+    const address = proxy.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Missing proxy address.');
+    }
+    const resettingClients = Array.from({ length: 10 }, () =>
+      connect(`https://127.0.0.1:${address.port}`, { rejectUnauthorized: false }),
+    );
+    await Promise.all(
+      resettingClients.map(
+        (resettingClient) =>
+          new Promise<void>((resolve, reject) => {
+            resettingClient.once('connect', resolve);
+            resettingClient.once('error', reject);
+          }),
+      ),
+    );
+    for (const resettingClient of resettingClients) {
+      resettingClient.on('error', () => undefined);
+      const request = resettingClient.request({
+        ':path': '/',
+        ':authority': 'missing.localhost',
+      });
+      request.on('error', () => undefined);
+      request.end();
+      request.close(HTTP2.NGHTTP2_CANCEL);
+      resettingClient.destroy();
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const status = await new Promise<number>((resolve, reject) => {
+      const request = client.request({ ':path': '/', ':authority': 'app.localhost' });
+      request.on('response', (headers) => resolve(Number(headers[':status'])));
+      request.once('error', reject);
+      request.resume();
+    });
+
+    expect(status).toBe(206);
+    if (!serverStream?.session) {
+      throw new Error('Missing server HTTP/2 stream.');
+    }
+    const reset = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+    expect(() => serverStream?.session?.emit('error', reset)).not.toThrow();
+    expect(() => serverStream?.emit('error', reset)).not.toThrow();
+    const writeAfterEnd = Object.assign(new Error('write after end'), {
+      code: 'ERR_STREAM_WRITE_AFTER_END',
+    });
+    expect(() => serverStream?.emit('error', writeAfterEnd)).not.toThrow();
+
+    const nextStatus = await new Promise<number>((resolve, reject) => {
+      const request = client.request({ ':path': '/', ':authority': 'app.localhost' });
+      request.on('response', (headers) => resolve(Number(headers[':status'])));
+      request.once('error', reject);
+      request.resume();
+    });
+    expect(nextStatus).toBe(206);
   });
 });
