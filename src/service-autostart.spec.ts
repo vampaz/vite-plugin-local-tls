@@ -1,4 +1,4 @@
-import { rm } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -242,6 +242,9 @@ describe('local TLS service auto-start', () => {
         `vite-local-tls-autostart-macos-background-${process.pid}`,
       );
       const paths = createStatePaths(directory);
+      const cliPath = path.join(directory, 'project', 'dist', 'cli.js');
+      await mkdir(path.dirname(cliPath), { recursive: true });
+      await writeFile(cliPath, 'export {};\n');
       const service = createService(directory);
       vi.spyOn(service, 'ensureRunning').mockRejectedValue(codedError('EACCES'));
       vi.spyOn(service, 'status').mockResolvedValue({
@@ -263,7 +266,7 @@ describe('local TLS service auto-start', () => {
           namespace: 'test',
           paths,
           nodePath: '/opt/homebrew/bin/node',
-          cliPath: '/project/dist/cli.js',
+          cliPath,
           homeDirectory: directory,
           uid: 501,
           username: 'developer',

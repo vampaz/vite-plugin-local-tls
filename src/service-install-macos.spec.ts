@@ -8,6 +8,7 @@ import type { StatePaths } from './interfaces/state-paths.js';
 import { installStartupService, uninstallStartupService } from './service-install.js';
 
 let temporaryDirectory: string;
+let cliFixturePath: string;
 
 function compileAppleScript(arguments_: string[], outputPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -41,6 +42,9 @@ function statePaths(): StatePaths {
 beforeEach(async () => {
   vi.stubEnv('CI', '');
   temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'vite-local-tls-launchd-'));
+  cliFixturePath = path.join(temporaryDirectory, 'project', 'dist', 'cli.js');
+  await mkdir(path.dirname(cliFixturePath), { recursive: true });
+  await writeFile(cliFixturePath, 'export {};\n');
 });
 
 afterEach(async () => {
@@ -67,7 +71,7 @@ describe('macOS startup service', () => {
       namespace: 'test',
       paths,
       nodePath: '/opt/homebrew/bin/node',
-      cliPath: '/project/dist/cli.js',
+      cliPath: cliFixturePath,
       homeDirectory: temporaryDirectory,
       uid: 501,
       username: 'developer',
@@ -172,6 +176,55 @@ describe('macOS startup service', () => {
     ]);
   });
 
+  it('does not expose a protected project CLI path to the elevated installer', async () => {
+    const paths = statePaths();
+    const protectedCliPath = path.join(
+      temporaryDirectory,
+      'Desktop',
+      'Work.nosync',
+      'project',
+      'dist',
+      'cli.js',
+    );
+    await mkdir(path.dirname(protectedCliPath), { recursive: true });
+    await writeFile(protectedCliPath, 'export {};\n');
+    let stagedCliPath = '';
+    const runner = vi.fn(async (_command: string, arguments_: string[]) => {
+      const installSequence = JSON.parse(arguments_.at(-1)!) as Array<{
+        command: string;
+        arguments_: string[];
+      }>;
+      const cliInstall = installSequence.find(
+        ({ command, arguments_: commandArguments }) =>
+          command === 'install' && commandArguments.at(-1)?.endsWith('/cli.js'),
+      );
+      stagedCliPath = cliInstall?.arguments_[2] ?? '';
+      if (stagedCliPath === protectedCliPath) {
+        throw new Error('Operation not permitted');
+      }
+      await expect(readFile(stagedCliPath, 'utf8')).resolves.toBe('export {};\n');
+      return { stdout: '', stderr: '' };
+    });
+
+    await expect(
+      installStartupService({
+        platform: 'darwin',
+        namespace: 'test',
+        paths,
+        nodePath: '/opt/homebrew/bin/node',
+        cliPath: protectedCliPath,
+        homeDirectory: temporaryDirectory,
+        uid: 501,
+        username: 'developer',
+        definitionDirectory: path.join(temporaryDirectory, 'Library', 'LaunchDaemons'),
+        runtimeInstallDirectory: path.join(temporaryDirectory, 'system-runtime'),
+        runner,
+      }),
+    ).resolves.toMatchObject({ installed: true });
+    expect(stagedCliPath).not.toBe(protectedCliPath);
+    await expect(access(stagedCliPath)).rejects.toThrow();
+  });
+
   it('refuses to overwrite an unrelated definition at the same path', async () => {
     const runner = vi.fn(async (_command: string, _arguments: string[]) => ({
       stdout: '',
@@ -182,7 +235,7 @@ describe('macOS startup service', () => {
       namespace: 'test',
       paths: statePaths(),
       nodePath: '/usr/bin/node',
-      cliPath: '/project/dist/cli.js',
+      cliPath: cliFixturePath,
       homeDirectory: temporaryDirectory,
       definitionDirectory: path.join(temporaryDirectory, 'Library', 'LaunchDaemons'),
       runtimeInstallDirectory: path.join(temporaryDirectory, 'system-runtime'),
@@ -212,7 +265,7 @@ describe('macOS startup service', () => {
       namespace: 'test',
       paths: statePaths(),
       nodePath: '/usr/bin/node',
-      cliPath: '/project/dist/cli.js',
+      cliPath: cliFixturePath,
       homeDirectory: temporaryDirectory,
       definitionDirectory: path.join(temporaryDirectory, 'Library', 'LaunchDaemons'),
       runtimeInstallDirectory: path.join(temporaryDirectory, 'system-runtime'),
@@ -240,7 +293,7 @@ describe('macOS startup service', () => {
       namespace: 'test',
       paths: statePaths(),
       nodePath: '/usr/bin/node',
-      cliPath: '/project/dist/cli.js',
+      cliPath: cliFixturePath,
       homeDirectory: temporaryDirectory,
       definitionDirectory: path.join(temporaryDirectory, 'Library', 'LaunchDaemons'),
       runtimeInstallDirectory: path.join(temporaryDirectory, 'system-runtime'),
