@@ -501,17 +501,19 @@ async function installMacos(
     options.paths.stateDirectory,
     `${identifier}.plist.tmp`,
   );
+  const temporaryCliPath = path.join(options.paths.stateDirectory, `${identifier}.cli.js.tmp`);
   await assertOwnedDefinition(definitionPath);
-  await writeFile(
-    temporaryDefinitionPath,
-    launchdDefinition({ ...options, nodePath, cliPath }, identifier),
-    { mode: 0o600 },
-  );
   try {
+    await writeFile(
+      temporaryDefinitionPath,
+      launchdDefinition({ ...options, nodePath, cliPath }, identifier),
+      { mode: 0o600 },
+    );
+    await copyFile(options.cliPath, temporaryCliPath);
     await runElevatedCommands(options, runner, [
       { command: 'mkdir', arguments_: ['-p', runtimeDirectory] },
       { command: 'install', arguments_: ['-m', '0755', options.nodePath, nodePath] },
-      { command: 'install', arguments_: ['-m', '0644', options.cliPath, cliPath] },
+      { command: 'install', arguments_: ['-m', '0644', temporaryCliPath, cliPath] },
       {
         command: 'install',
         arguments_: ['-m', '0644', temporaryDefinitionPath, definitionPath],
@@ -535,7 +537,10 @@ async function installMacos(
       { command: 'launchctl', arguments_: ['kickstart', '-k', `system/${identifier}`] },
     ]);
   } finally {
-    await unlink(temporaryDefinitionPath).catch(() => undefined);
+    await Promise.all([
+      unlink(temporaryDefinitionPath).catch(() => undefined),
+      unlink(temporaryCliPath).catch(() => undefined),
+    ]);
   }
   return { definitionPath, nodePath, cliPath, runtimeDirectory };
 }
