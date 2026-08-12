@@ -1,5 +1,4 @@
 import { X509Certificate } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { executeCommand } from './command-runner.js';
@@ -62,6 +61,8 @@ export class TrustStore {
           'add-trusted-cert',
           '-r',
           'trustRoot',
+          '-p',
+          'ssl',
           '-k',
           this.#macosKeychain(),
           this.#options.authority.certificatePath,
@@ -80,7 +81,9 @@ export class TrustStore {
     const status = await this.verify();
     if (!status.trusted) {
       throw new Error(
-        'The trust command completed, but the exact local CA fingerprint was not found.',
+        requirements.platform === 'darwin'
+          ? 'The trust command completed, but macOS did not accept the local CA for SSL trust.'
+          : 'The trust command completed, but the exact local CA fingerprint was not found.',
       );
     }
     return status;
@@ -93,15 +96,23 @@ export class TrustStore {
     }
     let trusted = false;
     if (requirements.platform === 'darwin') {
-      const result = await this.#run(requirements.trustToolPath, [
-        'find-certificate',
-        '-a',
-        '-p',
-        this.#macosKeychain(),
-      ]);
-      trusted =
-        pemFingerprints(result.stdout).includes(authority.fingerprint) &&
-        (await this.#hasMacosTrustSettings());
+      try {
+        await this.#run(requirements.trustToolPath, [
+          'verify-cert',
+          '-c',
+          authority.certificatePath,
+          '-p',
+          'ssl',
+          '-k',
+          this.#macosKeychain(),
+          '-L',
+          '-l',
+          '-q',
+        ]);
+        trusted = true;
+      } catch {
+        trusted = false;
+      }
     } else if (requirements.trustTool === 'certutil') {
       const result = await this.#run(requirements.trustToolPath, [
         '-user',
@@ -244,24 +255,6 @@ export class TrustStore {
       this.#options.macosKeychain ??
       path.join(os.homedir(), 'Library', 'Keychains', 'login.keychain-db')
     );
-  }
-
-  async #hasMacosTrustSettings(): Promise<boolean> {
-    const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'vite-local-tls-trust-'));
-    const settingsPath = path.join(temporaryDirectory, 'trust-settings.plist');
-    try {
-      await this.#run(this.#options.requirements.trustToolPath!, [
-        'trust-settings-export',
-        settingsPath,
-      ]);
-      const settings = await readFile(settingsPath, 'utf8');
-      const fingerprint = this.#options.authority.fingerprintSha1.toUpperCase();
-      return new RegExp(`<key>\\s*${fingerprint}\\s*</key>`, 'i').test(settings);
-    } catch {
-      return false;
-    } finally {
-      await rm(temporaryDirectory, { recursive: true, force: true });
-    }
   }
 
   async #windowsPath(filePath: string): Promise<string> {
