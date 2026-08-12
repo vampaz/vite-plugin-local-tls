@@ -10,7 +10,7 @@ import {
 import { get } from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestCertificate } from '../tests/fixtures/test-certificate.js';
 import { createSecureProxyServer, ProxyServer } from './proxy-server.js';
 import { RouteRegistry } from './route-registry.js';
@@ -20,6 +20,8 @@ let backend: Server;
 let proxy: ReturnType<typeof createSecureProxyServer>;
 let client: ClientHttp2Session;
 let serverStream: ServerHttp2Stream | undefined;
+
+const HTTP2_REQUEST_TIMEOUT_MS = 1_000;
 
 class CapturingProxyServer extends ProxyServer {
   override handleHttp2Stream(stream: ServerHttp2Stream, headers: IncomingHttpHeaders): void {
@@ -47,13 +49,55 @@ function close(server: Server | ReturnType<typeof createSecureProxyServer>): Pro
   return new Promise((resolve) => server.close(() => resolve()));
 }
 
+function requestHttp2(
+  method: 'GET' | 'HEAD',
+  requestPath: string,
+): Promise<{ status: number; headers: IncomingHttpHeaders; body: string }> {
+  return new Promise((resolve, reject) => {
+    const request = client.request({
+      ':method': method,
+      ':path': requestPath,
+      ':authority': 'app.localhost',
+    });
+    let status = 0;
+    let headers: IncomingHttpHeaders = {};
+    const chunks: Buffer[] = [];
+    const timeout = setTimeout(() => {
+      request.close(HTTP2.NGHTTP2_CANCEL);
+      reject(new Error(`Timed out waiting for HTTP/2 ${method} ${requestPath}.`));
+    }, HTTP2_REQUEST_TIMEOUT_MS);
+    request.on('response', (responseHeaders) => {
+      status = Number(responseHeaders[':status']);
+      headers = responseHeaders;
+    });
+    request.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+    request.on('end', () => {
+      clearTimeout(timeout);
+      resolve({ status, headers, body: Buffer.concat(chunks).toString() });
+    });
+    request.once('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    request.end();
+  });
+}
+
 beforeEach(async () => {
   serverStream = undefined;
   temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'vite-local-tls-http2-'));
   backend = createServer((request, response) => {
-    response.statusCode = 206;
-    response.setHeader('Set-Cookie', ['one=1', 'two=2']);
-    response.end(`${request.method} ${request.url} ${request.headers.host}`);
+    function sendResponse(): void {
+      response.statusCode = 206;
+      response.setHeader('Set-Cookie', ['one=1', 'two=2']);
+      response.setHeader('X-Upstream-Method', request.method ?? '');
+      response.end(`${request.method} ${request.url} ${request.headers.host}`);
+    }
+    if (request.url === '/delayed-head') {
+      setTimeout(sendResponse, 200);
+      return;
+    }
+    sendResponse();
   });
   const backendPort = await listen(backend);
   const registry = new RouteRegistry();
@@ -76,6 +120,38 @@ afterEach(async () => {
 });
 
 describe('HTTP/2 proxy', () => {
+  it('completes GET and HEAD requests with the expected response semantics', async () => {
+    const getResult = await requestHttp2('GET', '/get');
+    const headResult = await requestHttp2('HEAD', '/head');
+
+    expect(getResult).toMatchObject({
+      status: 206,
+      body: 'GET /get app.localhost',
+    });
+    expect(getResult.headers['x-upstream-method']).toBe('GET');
+    expect(headResult).toMatchObject({ status: 206, body: '' });
+    expect(headResult.headers['x-upstream-method']).toBe('HEAD');
+    expect(headResult.headers['set-cookie']).toEqual(['one=1', 'two=2']);
+  });
+
+  it('does not respond after the client destroys a stream', async () => {
+    const request = client.request({
+      ':method': 'HEAD',
+      ':path': '/delayed-head',
+      ':authority': 'app.localhost',
+    });
+    request.on('error', () => undefined);
+    request.end();
+    await vi.waitFor(() => expect(serverStream).toBeDefined());
+    const respond = vi.spyOn(serverStream!, 'respond');
+
+    request.close(HTTP2.NGHTTP2_CANCEL);
+    await vi.waitFor(() => expect(serverStream?.closed || serverStream?.destroyed).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    expect(respond).not.toHaveBeenCalled();
+  });
+
   it('translates HTTP/2 requests to the HTTP/1.1 Vite upstream', async () => {
     const result = await new Promise<{ status: number; cookies: string[]; body: string }>(
       (resolve, reject) => {

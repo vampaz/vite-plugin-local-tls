@@ -235,7 +235,7 @@ function respondHttp2Stream(
   headers: OutgoingHttpHeaders,
   waitForTrailers = false,
 ): boolean {
-  if (stream.headersSent || stream.writableEnded) {
+  if (stream.headersSent) {
     return false;
   }
   return runHttp2StreamOperation(stream, () =>
