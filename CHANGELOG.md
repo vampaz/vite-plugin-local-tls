@@ -1,5 +1,11 @@
 # @vampaz/vite-plugin-local-tls
 
+## 0.0.8
+
+### Patch Changes
+
+- ce0bed7: Complete HTTP/2 HEAD responses and require effective macOS SSL trust for generated certificates.
+
 ## 0.0.7
 
 ### Patch Changes
