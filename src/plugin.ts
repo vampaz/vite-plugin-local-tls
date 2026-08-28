@@ -500,7 +500,7 @@ function createPlugin(
     }
 
     function createControlClient(): PluginControlClient {
-      return dependencies.createControlClient({
+      const createdClient = dependencies.createControlClient({
         socketPath: activePaths.socketPath,
         ownerToken,
         onRouteLost(takeover): void {
@@ -515,6 +515,8 @@ function createPlugin(
           }
         },
       });
+      ownerToken ??= createdClient.ownerToken;
+      return createdClient;
     }
 
     async function recoverRoutes(): Promise<void> {
@@ -596,24 +598,48 @@ function createPlugin(
           ? { upstreamHostHeader: options.upstreamHostHeader }
           : {}),
       }));
+      process.once('SIGINT', onSigint);
+      process.once('SIGTERM', onSigterm);
+      server.httpServer?.once('close', () => void cleanup());
       try {
         const infrastructure = await dependencies.ensureInfrastructure({
           namespace,
           paths: requestedPaths,
           controlSocket: options.controlSocket,
         });
+        if (shuttingDown) {
+          return;
+        }
         useInfrastructureResult(infrastructure);
         const controlClient = createControlClient();
-        ownerToken = controlClient.ownerToken;
         client = controlClient;
         await controlClient.connect();
         await controlClient.register(routeInputs);
+        if (shuttingDown) {
+          await cleanup();
+          return;
+        }
       } catch (error) {
-        await cleanup().catch(() => undefined);
+        if (shuttingDown) {
+          await cleanup();
+          return;
+        }
+        const failedClient = client;
+        client = null;
+        if (failedClient) {
+          await closeWithRetry(failedClient);
+        }
         dependencies.logger.error(
           `Failed to register local TLS routes for ${domains.join(', ')}.`,
           error,
         );
+        const errorCode =
+          typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
+        if (errorCode === 'SERVICE_UPDATE_REQUIRED') {
+          void recoverRoutes();
+        } else {
+          await cleanup();
+        }
         return;
       }
       dependencies.logger.info(
@@ -628,9 +654,6 @@ function createPlugin(
         );
       }
       startHeartbeat();
-      process.once('SIGINT', onSigint);
-      process.once('SIGTERM', onSigterm);
-      server.httpServer?.once('close', () => void cleanup());
     }
 
     function startSetup(): void {
