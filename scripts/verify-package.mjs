@@ -69,6 +69,12 @@ async function verifyInstalledPackage(temporaryDirectory, tarballPath) {
   );
   requireValue(installedManifest.exports?.['.'], 'The root package export is missing.');
   requireValue(installedManifest.exports?.['./testing'], 'The testing package export is missing.');
+  requireValue(
+    (await readFile(path.join(installedRoot, 'dist', 'cli.js'), 'utf8')).includes(
+      installedManifest.version,
+    ),
+    'The installed service bundle does not embed the package version.',
+  );
 
   const importCheck = await run(
     process.execPath,

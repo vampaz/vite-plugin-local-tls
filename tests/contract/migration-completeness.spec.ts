@@ -36,6 +36,8 @@ describe('Caddy migration contract', () => {
       'control channel',
       'vite-local-tls trust',
       'vite-local-tls service install',
+      'one canonical service',
+      'serviceNamespace',
     ]) {
       expect(migration).toContain(mapping);
     }

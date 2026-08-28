@@ -1,6 +1,7 @@
 import { access, open, readFile, stat, unlink } from 'node:fs/promises';
 import { createConnection, type Socket } from 'node:net';
 import { randomUUID } from 'node:crypto';
+import os from 'node:os';
 import { CONTROL_PROTOCOL_VERSION, encodeControlMessage } from './control-protocol.js';
 import { LocalTlsDaemon } from './daemon.js';
 import type { ServiceAutoStartOptions } from './interfaces/service-autostart-options.js';
@@ -20,6 +21,7 @@ type ServiceProbe =
   | { status: 'unrelated'; reason: string };
 
 const INSTALLED_SERVICE_START_TIMEOUT_MS = 30_000;
+const BOOT_TIME_TOLERANCE_MS = 1_000;
 
 export class ServiceCoordinationError extends Error {
   readonly code: string;
@@ -44,6 +46,10 @@ function isProcessRunning(pid: number): boolean {
   }
 }
 
+function predatesCurrentBoot(timestamp: string): boolean {
+  return Date.parse(timestamp) < Date.now() - os.uptime() * 1_000 - BOOT_TIME_TOLERANCE_MS;
+}
+
 function parseServiceState(value: unknown): ServiceState | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null;
@@ -57,6 +63,7 @@ function parseServiceState(value: unknown): ServiceState | null {
     typeof state.namespace !== 'string' ||
     typeof state.socketPath !== 'string' ||
     typeof state.startedAt !== 'string' ||
+    !Number.isFinite(Date.parse(state.startedAt)) ||
     typeof state.protocolVersion !== 'number' ||
     typeof state.port !== 'number' ||
     typeof state.caFingerprint !== 'string'
@@ -457,6 +464,10 @@ export class LocalTlsService {
     return true;
   }
 
+  async withStartupServiceMutationLock<T>(operation: () => Promise<T>): Promise<T> {
+    return this.#withAuthorizationLock(operation);
+  }
+
   async #waitForInstalledService(timeoutMs: number): Promise<ServiceState> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -608,14 +619,21 @@ export class LocalTlsService {
       let lock: StartupLock | null = null;
       try {
         const value = JSON.parse(contents) as Partial<StartupLock>;
-        if (typeof value.pid === 'number' && typeof value.startedAt === 'string') {
+        if (
+          typeof value.pid === 'number' &&
+          Number.isSafeInteger(value.pid) &&
+          value.pid > 0 &&
+          typeof value.startedAt === 'string' &&
+          Number.isFinite(Date.parse(value.startedAt))
+        ) {
           lock = value as StartupLock;
         }
       } catch {
         lock = null;
       }
       const isOld = Date.now() - details.mtimeMs >= this.#options.staleLockMs;
-      if ((lock && !isProcessRunning(lock.pid)) || (!lock && isOld)) {
+      const predatesBoot = Boolean(lock && predatesCurrentBoot(lock.startedAt));
+      if (predatesBoot || (lock && !isProcessRunning(lock.pid)) || (!lock && isOld)) {
         await unlink(lockPath);
       }
     } catch (error) {
@@ -627,7 +645,7 @@ export class LocalTlsService {
 
   async #assertNoLiveUnhealthyDaemon(): Promise<void> {
     const state = await readServiceState(this.#options.paths.stateFile);
-    if (state && isProcessRunning(state.pid)) {
+    if (state && !predatesCurrentBoot(state.startedAt) && isProcessRunning(state.pid)) {
       throw new ServiceCoordinationError(
         'UNHEALTHY_DAEMON',
         `Process ${state.pid} owns the local TLS service metadata but is not healthy.`,

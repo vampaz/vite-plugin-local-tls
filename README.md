@@ -6,7 +6,7 @@ Local HTTPS routing for Vite dev and preview servers, with a stable, locally tru
 https://<repo>.<branch>.localhost
 ```
 
-The package has no runtime npm dependencies and supports concurrent clones and Git worktrees through one loopback-only TLS service.
+The package has no runtime npm dependencies and supports concurrent clones and Git worktrees through one machine-wide, loopback-only TLS service.
 
 ## Requirements
 
@@ -47,7 +47,9 @@ Local TLS upstream: http://127.0.0.1:5173
 Local TLS URL: https://<repo>.<branch>.localhost
 ```
 
-The first run may request administrator authorization to trust the local certificate authority and install the service that binds port 443. On macOS, service installation and idle updates use a native administrator dialog, including when the dev server starts in the background. If several Vite processes start together, they wait for the same authorization flow instead of opening competing prompts. An outdated compatible service keeps serving active routes without interruption and updates automatically on the next Vite start after it becomes idle.
+The first run may request administrator authorization to trust the local certificate authority and install the service that binds port 443. On macOS, service installation and idle updates use a native administrator dialog, including when the dev server starts in the background. If several Vite processes start together, they wait for the same authorization flow instead of opening competing prompts. An outdated compatible service keeps serving active routes without interruption and updates automatically on the next Vite start after it becomes idle. The updater never downgrades a newer compatible installed service.
+
+Port 443 has one canonical startup-service identity on macOS, Linux, and Windows. Releases before this invariant could leave namespaced legacy startup services that competed for the same port after a reboot. The plugin now requires both a strictly validated ownership record and an exact generated launchd plist, systemd unit, or single Task Scheduler action. It adopts a compatible active legacy winner without interrupting routes; once every legacy route is idle, it preserves the existing CA and imported certificates, preferring an already-trusted valid CA when several exist. It promotes the highest compatible newer legacy runtime into the canonical service instead of downgrading it, disables the verified contenders, waits for the canonical service to answer with the compatible control protocol, and only then removes the old definitions. Unverified or tampered targets are reported by `doctor`; their presence blocks automatic convergence and manual service installation until they are inspected.
 
 The same configuration supports Vite preview (`vite preview`); the route is registered after Vite selects the preview port.
 
@@ -95,13 +97,13 @@ localTls({ domain: ['app.localhost', 'api.localhost'] });
 
 ### Proxy and service options
 
-| Option               | Description                                                                                                                             |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `cors`               | Sets the proxied response's allow-origin value, allows common HTTP methods, and sets allow-headers to `*`.                              |
-| `upstreamHostHeader` | Rewrites the HTTP `Host` header sent to Vite. The default preserves the public hostname. WebSocket upgrades use the same value.         |
-| `internalTls`        | Controls certificate policy. Local and supported loopback names remain automated; see [Certificate policy](#certificate-policy).        |
-| `serviceNamespace`   | Isolates service state and the control channel. Useful for tests or deliberately separate environments.                                 |
-| `controlSocket`      | Overrides the private Unix socket or Windows named pipe. Use only a location protected from other users; see [Security](./SECURITY.md). |
+| Option               | Description                                                                                                                                                                   |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cors`               | Sets the proxied response's allow-origin value, allows common HTTP methods, and sets allow-headers to `*`.                                                                    |
+| `upstreamHostHeader` | Rewrites the HTTP `Host` header sent to Vite. The default preserves the public hostname. WebSocket upgrades use the same value.                                               |
+| `internalTls`        | Controls certificate policy. Local and supported loopback names remain automated; see [Certificate policy](#certificate-policy).                                              |
+| `serviceNamespace`   | Deprecated for the ordinary plugin runtime and ignored there; port 443 always uses canonical state. Retained for injected test infrastructure compatibility.                  |
+| `controlSocket`      | Deprecated for the ordinary plugin runtime and ignored there; the canonical service has one private control channel. Retained for injected test infrastructure compatibility. |
 
 The plugin supplies Vite defaults only when you have not set them yourself:
 
@@ -109,7 +111,7 @@ The plugin supplies Vite defaults only when you have not set them yourself:
 - HMR defaults to WSS on the public hostname and port 443.
 - Explicit Vite server, preview, and HMR settings always win.
 
-Compatibility options from `vite-plugin-caddy-multiple-tls` remain available: `serverName` is a deprecated alias for `serviceNamespace`, while `caddyApiUrl` and `caddyAdminOrigin` are deprecated no-ops. The exported `resolveCaddyTlsDomains`, `resolveCaddyTlsUrl`, and `ViteCaddyTlsPluginOptions` names are also deprecated aliases. See the dedicated [migration guide](./MIGRATION.md) for details.
+Compatibility options from `vite-plugin-caddy-multiple-tls` remain accepted: `serverName` is a deprecated alias for the now-canonicalized `serviceNamespace`, while `caddyApiUrl` and `caddyAdminOrigin` are deprecated no-ops. The exported `resolveCaddyTlsDomains`, `resolveCaddyTlsUrl`, and `ViteCaddyTlsPluginOptions` names are also deprecated aliases. See the dedicated [migration guide](./MIGRATION.md) for details.
 
 ## Certificate policy
 
@@ -168,11 +170,15 @@ npm exec -- vite-local-tls clean
 npm exec -- vite-local-tls clean --ca
 ```
 
-All commands accept `--namespace <name>` for isolated state and `--control-socket <path>` for an alternate private control channel. Run `npm exec -- vite-local-tls --help` for the complete command reference.
+Manual certificate and proxy commands accept `--namespace <name>` for isolated state and `--control-socket <path>` for an alternate private control channel. Persistent `service install` is deliberately canonical-only and rejects `--namespace`; `service uninstall --namespace <legacy-name>` remains available for explicit legacy cleanup. Run `npm exec -- vite-local-tls --help` for the complete command reference.
+
+`doctor` reports the canonical installation, its update state, owned legacy records, active route counts, recorded and live protocol versions, corrupt or incomplete records, and a repair command only when every target was probed and is idle. A normal plugin start performs the same read-only inventory before deciding whether to adopt, converge, update, or leave a target untouched. Canonical install, repair, and uninstall operations share one cross-process mutation lock, so simultaneous projects cannot authorize competing changes.
 
 ## Platform and DNS notes
 
-The TLS proxy listens only on `127.0.0.1` and `::1`. It does not expose a LAN-listening mode, an HTTP administration endpoint, or a network certificate-signing API. If another process owns port 443, the plugin reports the conflict and leaves that process untouched.
+The TLS proxy listens only on `127.0.0.1` and `::1`. It does not expose a LAN-listening mode, an HTTP administration endpoint, or a network certificate-signing API. If another process owns port 443, the plugin reports the conflict and leaves that process untouched. A managed service exits successfully on this conflict so launchd and systemd do not crash-loop; a later plugin start retries on demand after the port is available.
+
+On Linux, the persistent systemd service runs as the installing user and receives only `CAP_NET_BIND_SERVICE`. When its private control socket is under `/run/user/<uid>`, the unit requires systemd's matching user-runtime-directory unit so the socket parent exists before the daemon starts, including before the first interactive login. CI can instead grant its disposable Node process that capability and run the packed port-443 proof ephemerally; the test never creates or enables a boot-persistent service.
 
 The default `*.localhost` names do not depend on public DNS. Some Linux resolvers do not map arbitrary `*.localhost` names to loopback; use `loopbackDomain` when necessary:
 
@@ -189,6 +195,7 @@ See [Security](./SECURITY.md) for the complete trust, network, service, and cont
 ## Troubleshooting
 
 - Run `npm exec -- vite-local-tls doctor` first to inspect system requirements and service health.
+- If `doctor` reports legacy startup services with active routes, stop those Vite processes and start any updated project again. Idle owned contenders converge automatically.
 - On Linux, run Vite or lifecycle commands in an interactive terminal when administrator authorization is required. macOS uses a native administrator dialog even when the dev server starts in the background.
 - If an idle service cannot update automatically because authorization is unavailable, stop active Vite routes and run `npm exec -- vite-local-tls service install` from an interactive terminal.
 - If port 443 is occupied, identify and stop or reconfigure that process yourself; the plugin will not terminate it.

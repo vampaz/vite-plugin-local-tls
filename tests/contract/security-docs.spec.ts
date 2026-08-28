@@ -25,6 +25,8 @@ describe('security documentation contract', () => {
       'named pipe',
       'unrelated listener',
       'vite-local-tls untrust',
+      'canonical startup service',
+      'SuccessfulExit',
     ]) {
       expect(documentation).toContain(boundary);
     }

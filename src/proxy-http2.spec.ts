@@ -4,6 +4,7 @@ import {
   connect,
   constants as HTTP2,
   type ClientHttp2Session,
+  type Http2Session,
   type IncomingHttpHeaders,
   type ServerHttp2Stream,
 } from 'node:http2';
@@ -20,12 +21,14 @@ let backend: Server;
 let proxy: ReturnType<typeof createSecureProxyServer>;
 let client: ClientHttp2Session;
 let serverStream: ServerHttp2Stream | undefined;
+let serverSession: Http2Session | undefined;
 
 const HTTP2_REQUEST_TIMEOUT_MS = 1_000;
 
 class CapturingProxyServer extends ProxyServer {
   override handleHttp2Stream(stream: ServerHttp2Stream, headers: IncomingHttpHeaders): void {
     serverStream = stream;
+    serverSession = stream.session;
     super.handleHttp2Stream(stream, headers);
   }
 }
@@ -85,6 +88,7 @@ function requestHttp2(
 
 beforeEach(async () => {
   serverStream = undefined;
+  serverSession = undefined;
   temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'vite-local-tls-http2-'));
   backend = createServer((request, response) => {
     function sendResponse(): void {
@@ -261,16 +265,18 @@ describe('HTTP/2 proxy', () => {
     });
 
     expect(status).toBe(206);
-    if (!serverStream?.session) {
+    const capturedStream = serverStream;
+    const capturedSession = serverSession;
+    if (!capturedStream || !capturedSession) {
       throw new Error('Missing server HTTP/2 stream.');
     }
     const reset = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
-    expect(() => serverStream?.session?.emit('error', reset)).not.toThrow();
-    expect(() => serverStream?.emit('error', reset)).not.toThrow();
+    expect(() => capturedSession.emit('error', reset)).not.toThrow();
+    expect(() => capturedStream.emit('error', reset)).not.toThrow();
     const writeAfterEnd = Object.assign(new Error('write after end'), {
       code: 'ERR_STREAM_WRITE_AFTER_END',
     });
-    expect(() => serverStream?.emit('error', writeAfterEnd)).not.toThrow();
+    expect(() => capturedStream.emit('error', writeAfterEnd)).not.toThrow();
 
     const nextStatus = await new Promise<number>((resolve, reject) => {
       const request = client.request({ ':path': '/', ':authority': 'app.localhost' });

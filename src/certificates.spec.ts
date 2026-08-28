@@ -1,10 +1,22 @@
 import { X509Certificate } from 'node:crypto';
-import { access, chmod, mkdtemp, readFile, rm, stat, unlink } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import {
+  access,
+  chmod,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  unlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CertificateManager } from './certificates.js';
-import { getStatePaths } from './state-paths.js';
+import { ensureStatePaths, getStatePaths } from './state-paths.js';
 
 let temporaryDirectory: string;
 let paths: ReturnType<typeof getStatePaths>;
@@ -47,6 +59,54 @@ describe('CertificateManager CA', () => {
     expect(new Set(authorities.map(({ fingerprint }) => fingerprint)).size).toBe(1);
     await expect(access(`${paths.caStatePath}.lock`)).rejects.toMatchObject({ code: 'ENOENT' });
   });
+
+  it('never steals an old lock from a process that is still alive', async () => {
+    await ensureStatePaths(paths);
+    const holder = spawn(process.execPath, ['--eval', 'setInterval(() => undefined, 1000)'], {
+      stdio: 'ignore',
+    });
+    await once(holder, 'spawn');
+    const lockPath = `${paths.caStatePath}.lock`;
+    await writeFile(lockPath, `${holder.pid}\n`);
+    const old = new Date(Date.now() - 60_000);
+    await utimes(lockPath, old, old);
+    const authority = new CertificateManager({
+      paths,
+      opensslPath: 'openssl',
+    }).ensureCertificateAuthority();
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      await expect(readFile(lockPath, 'utf8')).resolves.toBe(`${holder.pid}\n`);
+    } finally {
+      const exit = once(holder, 'exit');
+      holder.kill();
+      await exit;
+    }
+    await expect(authority).resolves.toBeDefined();
+  });
+
+  it.each(['legacy-numeric', 'versioned-json'] as const)(
+    'clears a pre-reboot %s authority lock even when its PID has been reused',
+    async (format) => {
+      await ensureStatePaths(paths);
+      const lockPath = `${paths.caStatePath}.lock`;
+      await writeFile(
+        lockPath,
+        format === 'legacy-numeric'
+          ? `${process.pid}\n`
+          : `${JSON.stringify({ pid: process.pid, startedAt: new Date(0).toISOString() })}\n`,
+      );
+      if (format === 'legacy-numeric') {
+        const beforeBoot = new Date(0);
+        await utimes(lockPath, beforeBoot, beforeBoot);
+      }
+
+      await expect(
+        new CertificateManager({ paths, opensslPath: 'openssl' }).ensureCertificateAuthority(),
+      ).resolves.toBeDefined();
+      await expect(access(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    },
+  );
 
   it('returns the same CA and deduplicates concurrent creation', async () => {
     const manager = new CertificateManager({ paths, opensslPath: 'openssl' });

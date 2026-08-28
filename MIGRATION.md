@@ -30,22 +30,22 @@ The old helper names remain available as deprecated aliases, so changing only th
 
 ## Option mapping
 
-| Old option           | New option or outcome                                                                                                                               |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `domain`             | Preserved as `domain`.                                                                                                                              |
-| `baseDomain`         | Preserved as `baseDomain`.                                                                                                                          |
-| `loopbackDomain`     | Preserved as `loopbackDomain`.                                                                                                                      |
-| `repo`               | Preserved as `repo`.                                                                                                                                |
-| `branch`             | Preserved as `branch`.                                                                                                                              |
-| `instanceLabel`      | Preserved as `instanceLabel`.                                                                                                                       |
-| `cors`               | Preserved as `cors`.                                                                                                                                |
-| `internalTls`        | Preserved as `internalTls`, with the observable certificate outcomes described below.                                                               |
-| `upstreamHostHeader` | Preserved as `upstreamHostHeader`.                                                                                                                  |
-| `caddyApiUrl`        | Accepted as a deprecated no-op with a warning because no HTTP Admin API exists. Use `controlSocket` to select an alternate private control channel. |
-| `serverName`         | Accepted as a deprecated alias for `serviceNamespace`, which isolates daemon state and the control-channel name.                                    |
-| `caddyAdminOrigin`   | Accepted as a deprecated no-op with a warning because no HTTP administration API or Origin policy exists.                                           |
+| Old option           | New option or outcome                                                                                                                        |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `domain`             | Preserved as `domain`.                                                                                                                       |
+| `baseDomain`         | Preserved as `baseDomain`.                                                                                                                   |
+| `loopbackDomain`     | Preserved as `loopbackDomain`.                                                                                                               |
+| `repo`               | Preserved as `repo`.                                                                                                                         |
+| `branch`             | Preserved as `branch`.                                                                                                                       |
+| `instanceLabel`      | Preserved as `instanceLabel`.                                                                                                                |
+| `cors`               | Preserved as `cors`.                                                                                                                         |
+| `internalTls`        | Preserved as `internalTls`, with the observable certificate outcomes described below.                                                        |
+| `upstreamHostHeader` | Preserved as `upstreamHostHeader`.                                                                                                           |
+| `caddyApiUrl`        | Accepted as a deprecated no-op with a warning because no HTTP Admin API exists.                                                              |
+| `serverName`         | Accepted as a deprecated alias for `serviceNamespace`; both are ignored by the ordinary runtime because port 443 uses one canonical service. |
+| `caddyAdminOrigin`   | Accepted as a deprecated no-op with a warning because no HTTP administration API or Origin policy exists.                                    |
 
-No old public option name is rejected. `serverName` keeps its isolation behavior through the backend-neutral namespace. The two HTTP Admin API settings cannot affect the Caddyless backend, so they produce explicit migration warnings instead of disappearing silently.
+No old public option name is rejected. `serverName`, `serviceNamespace`, and `controlSocket` no longer split the ordinary port-443 runtime because multiple boot-persistent owners can collide after a restart. Explicitly injected infrastructure from the testing export can still isolate a non-production daemon and control channel. The two HTTP Admin API settings cannot affect the Caddyless backend, so they produce explicit migration warnings instead of disappearing silently.
 
 ## Certificate-policy mapping
 
@@ -86,7 +86,9 @@ npm exec -- vite-local-tls service install
 
 The installed service uses durable copies of Node and the bundled CLI outside the consumer checkout. On macOS it binds the low port through a root-owned LaunchDaemon and drops to the installing user before opening its control channel. Linux grants only the low-port capability to the user service. Windows keeps the task, CA state, and control channel under the current user.
 
-The private control channel replaces Caddy Admin API requests and the cross-process ownership files built around them. It is not reachable over TCP. Do not translate an old `caddyApiUrl` value into an HTTP address; choose a private `controlSocket` only when the default per-user path is unsuitable.
+Earlier package releases could derive persistent service identities from `serviceNamespace`. Updated projects discover those owned legacy services. A compatible service with active routes is reused without interruption. Once the legacy services are idle, the plugin preserves their validated CA and imported exact-host certificates, preferring an already-trusted legacy CA when more than one valid authority exists. It promotes the highest compatible newer legacy runtime into the canonical service, disables the verified contenders, and waits for that canonical service to answer with the compatible control protocol before deleting old definitions and runtime copies. A failed update restores the prior runtime bytes and at most one previously healthy macOS, Linux, or Windows owner; idle contenders stay disabled so rollback cannot recreate the boot collision. If restoration itself cannot be verified, every contender remains disabled. Newer compatible installed service versions are never downgraded, and the new ownership marker prevents older releases from overwriting a stopped current macOS or Linux definition. Any corrupt, incomplete, or non-exact installation target blocks automatic convergence and the manual repair install until it is inspected with `doctor`.
+
+The private control channel replaces Caddy Admin API requests and the cross-process ownership files built around them. It is not reachable over TCP. Do not translate an old `caddyApiUrl` value into an HTTP address. Alternate `controlSocket` values are for manual commands or explicitly injected non-production infrastructure, not the ordinary plugin runtime.
 
 If Caddy is still running on port 443, this plugin reports the unrelated listener and leaves it untouched. Stop or reconfigure Caddy yourself only after confirming no other project needs it.
 

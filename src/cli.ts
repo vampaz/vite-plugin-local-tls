@@ -5,6 +5,7 @@ import { readFile, rm, unlink } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { CertificateImportStore } from './certificate-import.js';
 import { CertificateManager } from './certificates.js';
+import { migrateLegacyCertificateState } from './legacy-certificate-migration.js';
 import { SERVICE_BOOTSTRAP_HOSTNAME } from './daemon.js';
 import type {
   CliActions,
@@ -17,10 +18,19 @@ import type {
   RunCliOptions,
 } from './interfaces/cli-options.js';
 import type { CertificateAuthorityRecord } from './interfaces/certificate-record.js';
+import type { ServiceInstallOptions } from './interfaces/service-install-options.js';
 import type { ServiceRuntimeConfiguration } from './interfaces/service-runtime-configuration.js';
 import { LocalTlsService } from './service.js';
-import { installStartupService, uninstallStartupService } from './service-install.js';
+import {
+  getStartupServiceUpdateStatus,
+  installStartupService,
+  replaceStartupService,
+  uninstallStartupService,
+} from './service-install.js';
+import { discoverStartupServiceInstallations } from './service-installation-discovery.js';
 import { getStatePaths } from './state-paths.js';
+import { diagnoseStartupServices } from './startup-service-diagnostics.js';
+import { selectCompatibleNewerStartupService } from './startup-service-lifecycle.js';
 import { inspectSystemRequirements } from './system-requirements.js';
 import { TrustStore } from './trust-store.js';
 
@@ -38,10 +48,27 @@ Commands:
   clean [--ca]
 
 Global options:
-  --namespace <name>  Use an isolated service namespace (default: default)
-  --control-socket <path>  Use an alternate private control socket or named pipe
+  --namespace <name>  Use isolated manual state; startup installation is default-only
+  --control-socket <path>  Use an alternate private control channel for manual commands
   --help              Show this help
 `;
+
+function errorHasCode(error: unknown, code: string): boolean {
+  let current = error;
+  while (current instanceof Error) {
+    if ((current as NodeJS.ErrnoException).code === code) {
+      return true;
+    }
+    current = current.cause;
+  }
+  return false;
+}
+
+function isStartupServiceInvocation(arguments_: string[]): boolean {
+  return (
+    arguments_.includes('proxy') && arguments_.includes('start') && arguments_.includes('--service')
+  );
+}
 
 function defaultIo(): CliIo {
   return {
@@ -152,6 +179,23 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+async function readDoctorServiceStatus(
+  service: LocalTlsService,
+): Promise<Awaited<ReturnType<LocalTlsService['status']>>> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await service.status();
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) {
+        await delay(100);
+      }
+    }
+  }
+  throw lastError;
+}
+
 function createService(context: CliContext): LocalTlsService {
   const requirements = inspectSystemRequirements();
   if (!requirements.opensslPath) {
@@ -167,6 +211,15 @@ function createService(context: CliContext): LocalTlsService {
     namespace: context.namespace,
     port: 443,
     ...(runAsUser ? { runAsUser } : {}),
+  });
+}
+
+function createStartupServiceMutationCoordinator(): LocalTlsService {
+  return new LocalTlsService({
+    paths: getStatePaths('default'),
+    opensslPath: 'openssl',
+    namespace: 'default',
+    port: 443,
   });
 }
 
@@ -235,13 +288,74 @@ function createDefaultCliActions(): CliActions {
 
   async function doctor(context: CliContext): Promise<unknown> {
     const requirements = inspectSystemRequirements();
-    const service = requirements.opensslPath ? await createService(context).status() : null;
-    const authority = await readAuthority(context);
-    const trust =
-      authority && requirements.trustToolPath
-        ? await new TrustStore({ requirements, authority }).verify()
-        : null;
-    return { requirements, service, authority, trust };
+    const errors: Array<{ check: string; message: string }> = [];
+    let service = null;
+    let authority = null;
+    let trust = null;
+    let startupService = null;
+    if (requirements.opensslPath) {
+      try {
+        service = await readDoctorServiceStatus(createService(context));
+      } catch (error) {
+        errors.push({
+          check: 'service',
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    try {
+      authority = await readAuthority(context);
+    } catch (error) {
+      errors.push({
+        check: 'authority',
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (authority && requirements.trustToolPath) {
+      try {
+        trust = await new TrustStore({ requirements, authority }).verify();
+      } catch (error) {
+        errors.push({
+          check: 'trust',
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    try {
+      const canonicalPaths = getStatePaths('default');
+      const cliPath = fileURLToPath(new URL('./cli.js', import.meta.url));
+      const inventory = await discoverStartupServiceInstallations({
+        platform: process.platform,
+        environment: process.env,
+        nodePath: process.execPath,
+        cliPath,
+      });
+      const canonicalUpdateStatus = await getStartupServiceUpdateStatus({
+        namespace: 'default',
+        paths: canonicalPaths,
+        nodePath: process.execPath,
+        cliPath,
+      }).catch(() => 'modified' as const);
+      startupService = await diagnoseStartupServices(
+        inventory,
+        async (installation) =>
+          readDoctorServiceStatus(
+            new LocalTlsService({
+              paths: installation.paths,
+              opensslPath: requirements.opensslPath ?? 'openssl',
+              namespace: installation.record.namespace,
+              port: 443,
+            }),
+          ),
+        canonicalUpdateStatus,
+      );
+    } catch (error) {
+      errors.push({
+        check: 'startupService',
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return { requirements, service, authority, trust, startupService, errors };
   }
 
   async function proxyStart(request: CliProxyStartRequest): Promise<unknown> {
@@ -262,7 +376,7 @@ function createDefaultCliActions(): CliActions {
             await trust(request);
           },
           async installService(): Promise<void> {
-            await serviceInstall(request);
+            await installStartupServiceCommand(request);
           },
         });
     let stopping = false;
@@ -294,35 +408,116 @@ function createDefaultCliActions(): CliActions {
     return createService(context).status();
   }
 
-  async function serviceInstall(context: CliContext): Promise<unknown> {
+  async function installStartupServiceCommand(context: CliContext): Promise<unknown> {
+    if (context.namespace !== 'default' || context.controlSocket !== undefined) {
+      throw new Error(
+        'Port 443 has one canonical startup service. Omit `--namespace` and `--control-socket` when installing it.',
+      );
+    }
     const requirements = inspectSystemRequirements();
     if (!requirements.opensslPath) {
       throw new Error('OpenSSL is required. Install openssl and ensure it is on PATH.');
     }
+    const paths = resolvePaths(context);
+    const cliPath = fileURLToPath(new URL('./cli.js', import.meta.url));
+    const serviceInstallOptions = {
+      namespace: context.namespace,
+      paths,
+      nodePath: process.execPath,
+      cliPath,
+      readinessCliPath: cliPath,
+      controlSocket: context.controlSocket,
+    };
+    const inventory = await discoverStartupServiceInstallations({
+      platform: process.platform,
+      environment: process.env,
+      nodePath: process.execPath,
+      cliPath,
+    });
+    if (inventory.invalid.length > 0) {
+      throw new Error(
+        `Refusing to change persistent local TLS services while ${inventory.invalid.length} installation record(s) cannot be verified. Run \`vite-local-tls doctor\` and inspect them before retrying.`,
+      );
+    }
+    const installations = [
+      ...(inventory.canonical ? [inventory.canonical] : []),
+      ...inventory.legacy,
+    ];
+    const inspected = await Promise.all(
+      installations.map(async (installation) => ({
+        installation,
+        status: await new LocalTlsService({
+          paths: installation.paths,
+          opensslPath: requirements.opensslPath!,
+          namespace: installation.record.namespace,
+          port: 443,
+        }).status(),
+      })),
+    );
+    const activeRoutes = inspected.reduce(
+      (total, { status }) => total + (status.running ? status.activeRoutes : 0),
+      0,
+    );
+    if (activeRoutes > 0) {
+      throw new Error(
+        `Refusing to migrate startup services while ${activeRoutes} route(s) are active. Stop those Vite processes and retry.`,
+      );
+    }
+    const migrationInspections = inspected.filter(
+      ({ installation }) =>
+        installation !== inventory.canonical || Boolean(installation.record.controlSocket),
+    );
+    const source = selectCompatibleNewerStartupService(migrationInspections);
+    let convergenceOptions: ServiceInstallOptions = serviceInstallOptions;
+    if (source?.record.version === 2) {
+      convergenceOptions = {
+        ...serviceInstallOptions,
+        nodePath: source.record.nodePath,
+        cliPath: source.record.cliPath,
+        currentVersion: source.record.packageVersion,
+      };
+    }
+    if (inventory.legacy.length > 0) {
+      await migrateLegacyCertificateState({
+        canonicalPaths: paths,
+        legacyInstallations: inventory.legacy,
+        opensslPath: requirements.opensslPath,
+        async isAuthorityTrusted(authority): Promise<boolean> {
+          return (await new TrustStore({ requirements, authority }).verify()).trusted;
+        },
+      });
+    }
     const manager = new CertificateManager({
-      paths: resolvePaths(context),
+      paths,
       opensslPath: requirements.opensslPath,
       isHostnameRegistered: (hostname) => hostname === SERVICE_BOOTSTRAP_HOSTNAME,
     });
     await manager.ensureCertificateAuthority();
     await manager.ensureLeafCertificate(SERVICE_BOOTSTRAP_HOSTNAME);
-    return installStartupService({
-      namespace: context.namespace,
-      paths: resolvePaths(context),
-      nodePath: process.execPath,
-      cliPath: fileURLToPath(new URL('./cli.js', import.meta.url)),
-      controlSocket: context.controlSocket,
-    });
+    return inventory.legacy.length > 0
+      ? replaceStartupService(
+          convergenceOptions,
+          inventory.legacy.map(({ options }) => options),
+        )
+      : installStartupService(convergenceOptions);
+  }
+
+  async function serviceInstall(context: CliContext): Promise<unknown> {
+    return createStartupServiceMutationCoordinator().withStartupServiceMutationLock(() =>
+      installStartupServiceCommand(context),
+    );
   }
 
   async function serviceUninstall(context: CliContext): Promise<unknown> {
-    return uninstallStartupService({
-      namespace: context.namespace,
-      paths: resolvePaths(context),
-      nodePath: process.execPath,
-      cliPath: fileURLToPath(new URL('./cli.js', import.meta.url)),
-      controlSocket: context.controlSocket,
-    });
+    return createStartupServiceMutationCoordinator().withStartupServiceMutationLock(() =>
+      uninstallStartupService({
+        namespace: context.namespace,
+        paths: resolvePaths(context),
+        nodePath: process.execPath,
+        cliPath: fileURLToPath(new URL('./cli.js', import.meta.url)),
+        controlSocket: context.controlSocket,
+      }),
+    );
   }
 
   async function clean(request: CliCleanRequest): Promise<unknown> {
@@ -441,6 +636,16 @@ async function dispatch(
   }
   if (command === 'service' && subcommand === 'install') {
     requireNoArguments(arguments_);
+    if (context.namespace !== 'default') {
+      throw new Error(
+        'Port 443 has one machine-wide startup service. Re-run `vite-local-tls service install` and omit `--namespace`.',
+      );
+    }
+    if (context.controlSocket !== undefined) {
+      throw new Error(
+        'The canonical startup service has one control channel. Re-run `vite-local-tls service install` and omit `--control-socket`.',
+      );
+    }
     return actions.serviceInstall(context);
   }
   if (command === 'service' && subcommand === 'uninstall') {
@@ -459,6 +664,7 @@ export async function runCli(
   options: RunCliOptions = {},
 ): Promise<number> {
   const io = options.io ?? defaultIo();
+  const startupServiceInvocation = isStartupServiceInvocation(arguments_);
   const parsedArguments = [...arguments_];
   if (takeFlag(parsedArguments, '--help')) {
     io.stdout(USAGE);
@@ -509,6 +715,12 @@ export async function runCli(
     return 0;
   } catch (error) {
     io.stderr(`${error instanceof Error ? error.message : String(error)}\n`);
+    if (startupServiceInvocation && errorHasCode(error, 'EADDRINUSE')) {
+      io.stderr(
+        'The startup service will remain stopped instead of repeatedly restarting; it will be started again on demand after port 443 becomes available.\n',
+      );
+      return 0;
+    }
     return 1;
   }
 }

@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { runCli } from './cli.js';
 import type { CliActions, CliIo } from './interfaces/cli-options.js';
+import { LocalTlsService } from './service.js';
 
 let stdout: string;
 let stderr: string;
@@ -122,6 +123,66 @@ describe('vite-local-tls CLI', () => {
       namespace: 'default',
       serviceMode: true,
     });
+  });
+
+  it('refuses to create a second persistent port-443 service namespace', async () => {
+    await expect(
+      runCli(['service', 'install', '--namespace', 'project-a'], { actions, io }),
+    ).resolves.toBe(1);
+
+    expect(actions.serviceInstall).not.toHaveBeenCalled();
+    expect(stderr).toContain('one machine-wide startup service');
+    expect(stderr).toContain('omit `--namespace`');
+  });
+
+  it('refuses to move the canonical startup service to another control channel', async () => {
+    await expect(
+      runCli(['service', 'install', '--control-socket', '/tmp/alternate.sock'], { actions, io }),
+    ).resolves.toBe(1);
+
+    expect(actions.serviceInstall).not.toHaveBeenCalled();
+    expect(stderr).toContain('one control channel');
+    expect(stderr).toContain('omit `--control-socket`');
+  });
+
+  it('allows explicit removal of a legacy namespaced startup service', async () => {
+    await expect(
+      runCli(['service', 'uninstall', '--namespace', 'project-a'], { actions, io }),
+    ).resolves.toBe(0);
+
+    expect(actions.serviceUninstall).toHaveBeenCalledWith({ namespace: 'project-a' });
+  });
+
+  it.each([
+    ['install', []],
+    ['uninstall', ['--namespace', 'project-a']],
+  ] as const)(
+    'coordinates manual service %s through the canonical mutation lock',
+    async (command, options) => {
+      const mutation = vi
+        .spyOn(LocalTlsService.prototype, 'withStartupServiceMutationLock')
+        .mockResolvedValue({ coordinated: command });
+      try {
+        await expect(runCli(['service', command, ...options], { io })).resolves.toBe(0);
+
+        expect(mutation).toHaveBeenCalledOnce();
+        expect(stdout).toContain(`"coordinated": "${command}"`);
+        expect(stderr).toBe('');
+      } finally {
+        mutation.mockRestore();
+      }
+    },
+  );
+
+  it('exits cleanly when a startup manager finds port 443 already occupied', async () => {
+    vi.mocked(actions.proxyStart).mockRejectedValueOnce(
+      Object.assign(new Error('Port 443 is already occupied.'), { code: 'EADDRINUSE' }),
+    );
+
+    await expect(runCli(['proxy', 'start', '--service'], { actions, io })).resolves.toBe(0);
+
+    expect(stderr).toContain('Port 443 is already occupied.');
+    expect(stderr).toContain('will remain stopped');
   });
 
   it('loads the installed service context from its validated runtime configuration', async () => {

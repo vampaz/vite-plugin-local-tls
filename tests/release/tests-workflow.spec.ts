@@ -47,6 +47,10 @@ describe('Tests workflow', () => {
 
   it('proves the installed startup service on Linux, macOS, and Windows', async () => {
     const { source, workflow } = await readWorkflow('tests.yml');
+    const platformSmoke = await readFile(
+      `${repositoryRoot}/scripts/verify-service-platform.mjs`,
+      'utf8',
+    );
     const job = workflow.jobs['service-smoke'];
     const commands = (job.steps as Array<Record<string, string>>).flatMap((step) =>
       step.run ? [step.run] : [],
@@ -67,6 +71,17 @@ describe('Tests workflow', () => {
           step.run === 'npm run test -- src/service-install-macos.spec.ts',
       )?.if,
     ).toBe("runner.os == 'macOS'");
+    expect(platformSmoke).toContain("const namespace = 'default';");
+    expect(platformSmoke).not.toContain('--namespace');
+    expect(platformSmoke).toContain("runCli(['doctor'])");
+    expect(platformSmoke).toContain("process.env.CI !== 'true'");
+    expect(platformSmoke).toContain('assertStartupServiceRemoved');
+    expect(platformSmoke).toContain('timeout: 120_000');
+    expect(
+      job.steps.find(
+        (step: Record<string, unknown>) => step.run === 'node scripts/verify-service-platform.mjs',
+      )?.env,
+    ).toEqual({ VITE_LOCAL_TLS_DISPOSABLE_SERVICE_SMOKE: 'true' });
   });
 });
 

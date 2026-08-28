@@ -1,0 +1,65 @@
+# Plan: Canonical Local TLS Service Lifecycle
+
+- [x] Phase 1: Freeze the singleton and compatibility contract
+  - [x] Step 1.1: Add failing contract tests proving that ordinary plugin instances always use one canonical port-443 infrastructure namespace while explicitly injected test infrastructure may remain isolated.
+    - Files: [`src/plugin-dev-server.spec.ts`, `src/plugin-config.spec.ts`, `tests/contract/legacy-api-compatibility.spec.ts`]
+    - Test: `npm run test -- src/plugin-dev-server.spec.ts src/plugin-config.spec.ts tests/contract/legacy-api-compatibility.spec.ts`
+  - [x] Step 1.2: Add failing service-install tests proving that persistent service identity is canonical on macOS, Linux, and Windows and that noncanonical persistent installation cannot create another boot-time port-443 contender.
+    - Files: [`src/service-install-macos.spec.ts`, `src/service-install-linux.spec.ts`, `src/service-install-windows.spec.ts`, `src/cli.spec.ts`]
+    - Test: `npm run test -- src/service-install-macos.spec.ts src/service-install-linux.spec.ts src/service-install-windows.spec.ts src/cli.spec.ts`
+  - [x] Step 1.3: Implement the canonical public runtime contract while retaining namespace isolation only for explicitly injected infrastructure and legacy-management CLI commands.
+    - Files: [`src/plugin.ts`, `src/cli.ts`, `src/service-install.ts`, `src/interfaces/plugin-runtime.ts`, `src/interfaces/service-install-options.ts`]
+    - Test: `npm run test -- src/plugin-dev-server.spec.ts src/plugin-config.spec.ts src/service-install-macos.spec.ts src/service-install-linux.spec.ts src/service-install-windows.spec.ts src/cli.spec.ts tests/contract/legacy-api-compatibility.spec.ts`
+
+- [x] Phase 2: Make legacy service collisions self-healing
+  - [x] Step 2.1: Add failing discovery tests for valid, corrupt, incomplete, unrelated, running, idle, and active legacy service records without trusting unverified system targets.
+    - Files: [`src/service-installation-discovery.spec.ts`, `src/interfaces/service-installation-inventory.ts`]
+    - Test: `npm run test -- src/service-installation-discovery.spec.ts`
+  - [x] Step 2.2: Implement ownership-safe inventory and canonical convergence across macOS LaunchDaemons, Linux systemd services, and Windows scheduled tasks.
+    - Files: [`src/service-installation-discovery.ts`, `src/service-install.ts`, `src/state-paths.ts`, `src/interfaces/service-installation-inventory.ts`, `src/interfaces/service-install-options.ts`]
+    - Test: `npm run test -- src/service-installation-discovery.spec.ts src/service-install-macos.spec.ts src/service-install-linux.spec.ts src/service-install-windows.spec.ts`
+  - [x] Step 2.3: Add active-route-safe startup selection: reuse a compatible legacy winner without interruption, converge idle owned services in one authorization workflow, and never touch unrelated port-443 listeners.
+    - Files: [`src/plugin.ts`, `src/service.ts`, `src/service-autostart.spec.ts`, `src/plugin-reconnect.spec.ts`, `src/interfaces/plugin-runtime.ts`]
+    - Test: `npm run test -- src/service-autostart.spec.ts src/plugin-reconnect.spec.ts src/service-installation-discovery.spec.ts`
+  - [x] Step 2.4: Extend `doctor` to report canonical, adopted legacy, conflicting owned, corrupt, and unrelated states, with an explicit repair path for cases that cannot be repaired during normal startup.
+    - Files: [`src/cli.ts`, `src/cli.spec.ts`, `README.md`]
+    - Test: `npm run test -- src/cli.spec.ts tests/contract/readme-examples.spec.ts`
+
+- [x] Phase 3: Eliminate cross-version reinstall and downgrade loops
+  - [x] Step 3.1: Add failing compatibility tests for legacy records, current records, newer compatible services, older compatible services, incompatible protocols, prerelease versions, and an older byte-comparison client facing the new private record.
+    - Files: [`src/service-semver.spec.ts`, `src/service-install-version.spec.ts`, `scripts/verify-package.mjs`]
+    - Test: `npm run test -- src/service-version.spec.ts src/service-install-version.spec.ts`
+  - [x] Step 3.2: Embed the package service version, store a private v2 installation record invisible to old byte-comparison clients, and update only when the installed compatible service is older—never when it is newer.
+    - Files: [`tsup.config.ts`, `src/service-version.ts`, `src/service-install.ts`, `src/daemon.ts`, `src/service.ts`, `src/interfaces/service-state.ts`, `src/interfaces/service-install-options.ts`, `src/service-install-version.spec.ts`]
+    - Test: `npm run test -- src/service-version.spec.ts src/service-install-version.spec.ts src/service-autostart.spec.ts`
+  - [x] Step 3.3: Prove packed-package integrity plus older, equal, newer, prerelease, invalid-version, and incompatible-protocol record behavior without downgrading installed bytes.
+    - Files: [`scripts/verify-package.mjs`, `src/service-install-version.spec.ts`, `src/service-semver.spec.ts`]
+    - Test: `npm run verify:package && npm run test -- src/service-install-version.spec.ts src/service-semver.spec.ts`
+
+- [x] Phase 4: Ensure tests and permanent conflicts cannot poison future boots
+  - [x] Step 4.1: Make noncanonical persistent installation impossible on every platform and cover the guard at the CLI and service-install layers.
+    - Files: [`src/cli.ts`, `src/service-install.ts`, `src/service-install-macos.spec.ts`, `src/service-install-linux.spec.ts`, `src/service-install-windows.spec.ts`]
+    - Test: `npm run test -- src/cli.spec.ts src/service-install-macos.spec.ts src/service-install-linux.spec.ts src/service-install-windows.spec.ts`
+  - [x] Step 4.2: Use the CI Node process's disposable low-port capability for the privileged packed proof, with no startup-manager installation; cleanup remains tied to the test process and disposable state root.
+    - Files: [`tests/e2e/default-path.spec.ts`, `tests/fixtures/server-process.ts`, `.github/workflows/e2e.yml`]
+    - Test: `npm run test:e2e:default-path`
+  - [x] Step 4.3: Stop permanent `EADDRINUSE` failures from crash-looping: exit cleanly under startup managers, retain exact diagnostics for interactive clients, and remain retryable on demand.
+    - Files: [`src/cli.ts`, `src/proxy-listeners.ts`, `src/service-install.ts`, `src/cli.spec.ts`, `src/proxy-listeners.spec.ts`]
+    - Test: `npm run test -- src/cli.spec.ts src/proxy-listeners.spec.ts src/service-install-macos.spec.ts src/service-install-linux.spec.ts`
+  - [x] Step 4.4: Move the privileged default-path E2E proof to a disposable capability-enabled Linux process and prove SIGKILL cannot leave a boot-persistent definition.
+    - Files: [`tests/e2e/default-path.spec.ts`, `tests/fixtures/server-process.ts`, `.github/workflows/e2e.yml`, `tests/release/tests-workflow.spec.ts`]
+    - Test: `npm run test -- tests/release/tests-workflow.spec.ts && npm run test:e2e:default-path`
+
+- [x] Phase 5: Document, package, and prove the complete lifecycle
+  - [x] Step 5.1: Document the singleton invariant, automatic legacy convergence, version policy, ephemeral testing boundary, Linux behavior, diagnostics, and compatibility changes; add a minor Changeset.
+    - Files: [`README.md`, `MIGRATION.md`, `SECURITY.md`, `CHANGELOG.md`, `.changeset/*.md`, `tests/contract/readme-examples.spec.ts`, `tests/contract/security-docs.spec.ts`, `tests/contract/migration-completeness.spec.ts`]
+    - Test: `npm run test -- tests/contract/readme-examples.spec.ts tests/contract/security-docs.spec.ts tests/contract/migration-completeness.spec.ts`
+  - [x] Step 5.2: Run focused and complete static/unit/package validation without bypassing hooks.
+    - Files: [all task changes]
+    - Test: `npm run check && npm run typecheck && npm run test && npm run verify:package && npm run verify:release-dry-run && npm run verify:workflows`
+  - [x] Step 5.3: Verify the real installed macOS v1 definition and active route read-only without disrupting it; prove normal E2E behavior and Vite 3-8 compatibility locally; verify macOS, Linux, and Windows migration/rollback definitions through platform suites and the disposable CI smoke configuration.
+    - Files: [packed artifact and operating-system service state only]
+    - Test: `node dist/cli.js doctor && npm run test:e2e && npm run test:e2e:matrix`
+  - [x] Step 5.4: Run the mandatory three-pass `review-and-fix` cycle and repeat all affected validation after every repair until the final revision has no actionable findings.
+    - Files: [complete branch diff]
+    - Test: `git diff --check && npm run check && npm run typecheck && npm run test && npm run verify:package`

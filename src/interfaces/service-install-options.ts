@@ -16,6 +16,10 @@ export interface ServiceInstallElevatedCommand {
   command: string;
   arguments_: string[];
   allowFailure?: boolean;
+  clearRollbackAfterSuccess?: boolean;
+  discardRollbackAfterSuccess?: boolean;
+  rollbackAfterSuccess?: ServiceInstallElevatedCommand[];
+  timeoutMs?: number;
 }
 
 export interface ServiceInstallOptions {
@@ -33,22 +37,49 @@ export interface ServiceInstallOptions {
   definitionDirectory?: string;
   runtimeInstallDirectory?: string;
   controlSocket?: string;
+  currentVersion?: string;
+  readinessCliPath?: string;
+  waitForServiceReady?: () => Promise<void>;
 }
 
-export interface ServiceInstallationRecord {
-  version: 1;
+interface ServiceInstallationRecordBase {
   platform: NodeJS.Platform;
   namespace: string;
   identifier: string;
   definitionPath: string | null;
   nodePath: string;
   cliPath: string;
-  runtimeDirectory?: string;
+  runtimeDirectory: string;
   controlSocket: string | null;
   installedAt: string;
 }
+
+export interface LegacyServiceInstallationRecord extends ServiceInstallationRecordBase {
+  version: 1;
+}
+
+export interface CurrentServiceInstallationRecord extends ServiceInstallationRecordBase {
+  version: 2;
+  packageVersion: string;
+  protocolVersion: number;
+  installationState: 'installing' | 'installed';
+}
+
+export type ServiceInstallationRecord =
+  | LegacyServiceInstallationRecord
+  | CurrentServiceInstallationRecord;
 
 export interface ServiceInstallResult {
   installed: boolean;
   record: ServiceInstallationRecord | null;
 }
+
+export type StartupServiceUpdateStatus =
+  | 'absent'
+  | 'current'
+  | 'newer'
+  | 'newer-incompatible'
+  | 'legacy'
+  | 'outdated'
+  | 'modified'
+  | 'installing';

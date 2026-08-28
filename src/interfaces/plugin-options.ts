@@ -11,11 +11,13 @@ export interface LocalTlsDomainOptions {
 
 export interface LocalTlsPluginOptions extends LocalTlsDomainOptions {
   cors?: string;
+  /** @deprecated The ordinary port-443 runtime always uses its canonical control channel. */
   controlSocket?: string;
+  /** @deprecated The ordinary port-443 runtime always uses the canonical service namespace. */
   serviceNamespace?: string;
-  /** @deprecated Use serviceNamespace. */
+  /** @deprecated The ordinary port-443 runtime always uses the canonical service namespace. */
   serverName?: string;
-  /** @deprecated The local TLS service has no HTTP Admin API. Use controlSocket if needed. */
+  /** @deprecated The local TLS service has no HTTP Admin API. */
   caddyApiUrl?: string;
   /** @deprecated The local TLS service has no HTTP Admin API or Origin policy. */
   caddyAdminOrigin?: string;

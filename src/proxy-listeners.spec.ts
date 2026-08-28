@@ -1,4 +1,6 @@
 import { createServer, get, type Server } from 'node:http';
+import { once } from 'node:events';
+import { createConnection, createServer as createNetworkServer } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ProxyListenerSet } from './interfaces/proxy-listeners.js';
 import { startProxyListeners } from './proxy-listeners.js';
@@ -94,6 +96,23 @@ describe('proxy listeners', () => {
       startProxyListeners({ port: occupiedPort, createServer: () => createServer() }),
     ).rejects.toMatchObject({ code: 'EADDRINUSE', address: '127.0.0.1' });
     await expect(fetch('127.0.0.1', occupiedPort, 'anything.localhost')).resolves.toBe('unrelated');
+  });
+
+  it('closes accepted clients so an idle service can stop promptly', async () => {
+    listeners = await startProxyListeners({
+      port: 0,
+      createServer: () => createNetworkServer(),
+    });
+    const client = createConnection({ host: '127.0.0.1', port: listeners.port });
+    await once(client, 'connect');
+    client.on('error', () => undefined);
+    const clientClosed = new Promise<void>((resolve) => client.once('close', () => resolve()));
+
+    await listeners.close();
+    listeners = null;
+
+    await clientClosed;
+    expect(client.destroyed).toBe(true);
   });
 
   it('closes the IPv4 listener if the matching IPv6 bind fails', async () => {

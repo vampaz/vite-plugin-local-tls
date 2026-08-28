@@ -9,6 +9,7 @@ import type {
 } from './interfaces/plugin-runtime.js';
 import type { ServiceState } from './interfaces/service-state.js';
 import { createViteLocalTlsPlugin } from './plugin.js';
+import { getStatePaths } from './state-paths.js';
 
 interface MockHttpServer extends EventEmitter {
   listening: boolean;
@@ -212,6 +213,74 @@ describe('Vite dev-server registration', () => {
         upstreamHostHeader: 'localhost:3999',
       },
     ]);
+  });
+
+  it('uses one canonical port-443 infrastructure for ordinary plugin instances', async () => {
+    const canonicalRuntime = createRuntime();
+    canonicalRuntime.dependencies.infrastructureMode = 'canonical';
+    const httpServer = createHttpServer(5174);
+    const server = createServer(httpServer);
+    const plugin = createViteLocalTlsPlugin(
+      {
+        domain: 'canonical.localhost',
+        serviceNamespace: 'old-project-namespace',
+        controlSocket: '/tmp/old-project-control.sock',
+      },
+      canonicalRuntime.dependencies,
+    );
+
+    configureServer(plugin, server);
+    httpServer.listening = true;
+    httpServer.emit('listening');
+    await flushPromises();
+    await flushPromises();
+
+    expect(canonicalRuntime.dependencies.ensureInfrastructure).toHaveBeenCalledWith({
+      namespace: 'default',
+      paths: getStatePaths('default'),
+    });
+    expect(canonicalRuntime.dependencies.createControlClient).toHaveBeenCalledWith(
+      expect.objectContaining({ socketPath: getStatePaths('default').socketPath }),
+    );
+    expect(canonicalRuntime.logs).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('serviceNamespace'),
+        expect.stringContaining('controlSocket'),
+      ]),
+    );
+  });
+
+  it('connects to an active legacy service selected without route interruption', async () => {
+    const legacyPaths = getStatePaths('legacy-winner');
+    vi.mocked(runtime.dependencies.ensureInfrastructure).mockResolvedValueOnce({
+      state: {
+        version: 1,
+        pid: 321,
+        namespace: 'legacy-winner',
+        socketPath: legacyPaths.socketPath,
+        startedAt: new Date().toISOString(),
+        protocolVersion: 1,
+        port: 443,
+        caFingerprint: 'legacy-fingerprint',
+      },
+      namespace: 'legacy-winner',
+      paths: legacyPaths,
+      adoptedLegacy: true,
+      invalidInstallations: [],
+    });
+    const httpServer = createHttpServer(5175);
+    const server = createServer(httpServer);
+    const plugin = createViteLocalTlsPlugin({ domain: 'adopted.localhost' }, runtime.dependencies);
+
+    configureServer(plugin, server);
+    httpServer.listening = true;
+    httpServer.emit('listening');
+    await flushPromises();
+    await flushPromises();
+
+    expect(runtime.dependencies.createControlClient).toHaveBeenCalledWith(
+      expect.objectContaining({ socketPath: legacyPaths.socketPath }),
+    );
   });
 
   it.each([
