@@ -1,5 +1,11 @@
 # @vampaz/vite-plugin-local-tls
 
+## 0.1.1
+
+### Patch Changes
+
+- d07ffd6: Keep a running Vite or Astro server retrying initial TLS route registration so completing a required startup-service update restores HTTPS without restarting the dev server.
+
 ## 0.1.0
 
 ### Minor Changes
