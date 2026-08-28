@@ -15,10 +15,20 @@ import type {
   PluginControlClient,
   PluginRuntimeDependencies,
 } from './interfaces/plugin-runtime.js';
+import type { ServiceInstallOptions } from './interfaces/service-install-options.js';
 import type { StatePaths } from './interfaces/state-paths.js';
+import { migrateLegacyCertificateState } from './legacy-certificate-migration.js';
 import { LocalTlsService } from './service.js';
-import { installStartupService, isStartupServiceCurrent } from './service-install.js';
+import {
+  getStartupServiceUpdateStatus,
+  installStartupService,
+  replaceStartupService,
+  startOwnedStartupService,
+  startStartupService,
+} from './service-install.js';
+import { discoverStartupServiceInstallations } from './service-installation-discovery.js';
 import { getStatePaths } from './state-paths.js';
+import { ensureStartupServiceLifecycle } from './startup-service-lifecycle.js';
 import { assertTlsSystemRequirements, inspectSystemRequirements } from './system-requirements.js';
 import { TrustStore } from './trust-store.js';
 
@@ -71,51 +81,167 @@ function createDefaultDependencies(): PluginRuntimeDependencies {
   };
   return {
     platform: process.platform,
+    infrastructureMode: 'canonical',
     logger,
     createControlClient(options): PluginControlClient {
       return new ControlClient(options);
     },
     async ensureInfrastructure(
       request,
-    ): Promise<Awaited<ReturnType<LocalTlsService['autoStart']>>> {
+    ): Promise<Awaited<ReturnType<typeof ensureStartupServiceLifecycle>>> {
       const requirements = inspectSystemRequirements();
       assertTlsSystemRequirements(requirements);
       const opensslPath = requirements.opensslPath!;
-      const manager = new CertificateManager({ paths: request.paths, opensslPath });
-      const authority = await manager.ensureCertificateAuthority();
-      const trustStore = new TrustStore({ requirements, authority });
-      const service = new LocalTlsService({
-        paths: request.paths,
-        opensslPath,
-        namespace: request.namespace,
-        port: 443,
-      });
+      const cliPath = fileURLToPath(new URL('./cli.js', import.meta.url));
       const serviceInstallOptions = {
         namespace: request.namespace,
         paths: request.paths,
         nodePath: process.execPath,
-        cliPath: fileURLToPath(new URL('./cli.js', import.meta.url)),
+        cliPath,
+        readinessCliPath: cliPath,
         controlSocket: request.controlSocket,
       };
-      return service.autoStart({
-        onAuthorizationWait(): void {
-          logger.info(
-            'Waiting for another Vite process to finish local TLS administrator authorization...',
-          );
+      async function discover() {
+        return discoverStartupServiceInstallations({
+          platform: process.platform,
+          environment: process.env,
+          nodePath: process.execPath,
+          cliPath,
+        });
+      }
+      function createService(paths: StatePaths, namespace: string): LocalTlsService {
+        return new LocalTlsService({ paths, opensslPath, namespace, port: 443 });
+      }
+      async function ensureService(
+        paths: StatePaths,
+        namespace: string,
+        serviceOptions: Pick<
+          Parameters<LocalTlsService['autoStart']>[0],
+          'isServiceCurrent' | 'installService'
+        >,
+      ) {
+        const manager = new CertificateManager({ paths, opensslPath });
+        const authority = await manager.ensureCertificateAuthority();
+        const trustStore = new TrustStore({ requirements, authority });
+        return createService(paths, namespace).autoStart({
+          onAuthorizationWait(): void {
+            logger.info(
+              'Waiting for another Vite process to finish local TLS administrator authorization...',
+            );
+          },
+          async isTrusted(): Promise<boolean> {
+            return (await trustStore.verify()).trusted;
+          },
+          async trust(): Promise<void> {
+            await trustStore.install();
+          },
+          ...serviceOptions,
+        });
+      }
+      const result = await ensureStartupServiceLifecycle({
+        canonicalNamespace: request.namespace,
+        canonicalPaths: request.paths,
+        discover,
+        async status(installation) {
+          return createService(installation.paths, installation.record.namespace).status();
         },
-        async isTrusted(): Promise<boolean> {
-          return (await trustStore.verify()).trusted;
+        async ensureLegacy(installation) {
+          return ensureService(installation.paths, installation.record.namespace, {
+            async isServiceCurrent(): Promise<boolean> {
+              return (
+                await createService(installation.paths, installation.record.namespace).status()
+              ).running;
+            },
+            async installService(): Promise<void> {
+              await startOwnedStartupService(installation.options);
+            },
+          });
         },
-        async trust(): Promise<void> {
-          await trustStore.install();
+        async ensureCanonical({ installService }) {
+          const inventory = await discover();
+          if (inventory.legacy.length > 0) {
+            const migration = await migrateLegacyCertificateState({
+              canonicalPaths: request.paths,
+              legacyInstallations: inventory.legacy,
+              opensslPath,
+              async isAuthorityTrusted(authority): Promise<boolean> {
+                return (await new TrustStore({ requirements, authority }).verify()).trusted;
+              },
+            });
+            if (migration.authorityNamespace) {
+              logger.info(
+                `Preserved the local TLS authority from legacy service ${migration.authorityNamespace}.`,
+              );
+            }
+            if (migration.importedHostnames.length > 0) {
+              logger.info(
+                `Preserved imported TLS certificates for ${migration.importedHostnames.join(', ')}.`,
+              );
+            }
+            if (migration.conflicts.length > 0) {
+              logger.warn(
+                `Kept canonical imported certificates for ${migration.conflicts.join(', ')} because legacy services contained different certificates for the same hostnames.`,
+              );
+            }
+          }
+          return ensureService(request.paths, request.namespace, {
+            async isServiceCurrent(): Promise<boolean> {
+              const inventory = await discover();
+              if (inventory.legacy.length > 0) {
+                return false;
+              }
+              const updateStatus = await getStartupServiceUpdateStatus(serviceInstallOptions);
+              if (updateStatus !== 'newer') {
+                return updateStatus === 'absent' || updateStatus === 'current';
+              }
+              const status = await createService(request.paths, request.namespace).status();
+              return status.running && status.compatible;
+            },
+            installService,
+          });
         },
-        async isServiceCurrent(): Promise<boolean> {
-          return isStartupServiceCurrent(serviceInstallOptions);
-        },
-        async installService(): Promise<void> {
-          await installStartupService(serviceInstallOptions);
+        async converge(installations, source) {
+          if (source && source.record.version !== 2) {
+            throw new Error('Refusing to promote a legacy runtime without version metadata.');
+          }
+          let convergenceOptions: ServiceInstallOptions = serviceInstallOptions;
+          if (source?.record.version === 2) {
+            convergenceOptions = {
+              ...serviceInstallOptions,
+              nodePath: source.record.nodePath,
+              cliPath: source.record.cliPath,
+              currentVersion: source.record.packageVersion,
+            };
+          }
+          const updateStatus = await getStartupServiceUpdateStatus(convergenceOptions);
+          if (updateStatus === 'newer-incompatible') {
+            throw new Error(
+              'A newer installed local TLS service uses an incompatible control protocol. Update this project to that plugin version before starting it.',
+            );
+          }
+          if (updateStatus === 'current' || updateStatus === 'newer') {
+            await startStartupService(
+              convergenceOptions,
+              installations.map(({ options }) => options),
+            );
+            return;
+          }
+          if (installations.length > 0) {
+            await replaceStartupService(
+              convergenceOptions,
+              installations.map(({ options }) => options),
+            );
+            return;
+          }
+          await installStartupService(convergenceOptions);
         },
       });
+      for (const invalid of result.invalidInstallations) {
+        logger.warn(
+          `Ignored unsafe local TLS startup-service installation ${invalid.namespace}: ${invalid.message} Run \`vite-local-tls doctor\` for repair details.`,
+        );
+      }
+      return result;
     },
   };
 }
@@ -126,7 +252,7 @@ function resolveCompatibilityOptions(
 ): LocalTlsPluginOptions {
   if (options.caddyApiUrl !== undefined) {
     dependencies.logger.warn(
-      '`caddyApiUrl` is deprecated and ignored because the local TLS service has no HTTP Admin API. Use `controlSocket` when a custom control channel is required.',
+      '`caddyApiUrl` is deprecated and ignored because the local TLS service has no HTTP Admin API. Alternate control channels are limited to explicitly injected test infrastructure.',
     );
   }
   if (options.caddyAdminOrigin !== undefined) {
@@ -134,9 +260,30 @@ function resolveCompatibilityOptions(
       '`caddyAdminOrigin` is deprecated and ignored because the local TLS service has no HTTP Admin API.',
     );
   }
-  return {
+  const compatibleOptions = {
     ...options,
     serviceNamespace: options.serviceNamespace ?? options.serverName,
+  };
+  if (dependencies.infrastructureMode !== 'canonical') {
+    return compatibleOptions;
+  }
+  if (
+    compatibleOptions.serviceNamespace !== undefined &&
+    compatibleOptions.serviceNamespace !== 'default'
+  ) {
+    dependencies.logger.warn(
+      '`serviceNamespace` no longer creates a separate port-443 service. The machine-wide canonical service is used to prevent startup collisions.',
+    );
+  }
+  if (compatibleOptions.controlSocket !== undefined) {
+    dependencies.logger.warn(
+      '`controlSocket` is ignored by the ordinary plugin runtime because the machine-wide port-443 service has one canonical control channel.',
+    );
+  }
+  return {
+    ...compatibleOptions,
+    serviceNamespace: 'default',
+    controlSocket: undefined,
   };
 }
 
@@ -247,7 +394,14 @@ function createPlugin(
     let routeInputs: OwnedRouteInput[] = [];
     const ownedHostnames = new Set(domains);
     const namespace = options.serviceNamespace ?? 'default';
-    const paths = resolvePaths(options);
+    const requestedPaths = resolvePaths(options);
+    let activePaths = requestedPaths;
+
+    function useInfrastructureResult(
+      result: Awaited<ReturnType<PluginRuntimeDependencies['ensureInfrastructure']>>,
+    ): void {
+      activePaths = 'paths' in result ? result.paths : requestedPaths;
+    }
 
     function delay(milliseconds: number): Promise<void> {
       return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -347,7 +501,7 @@ function createPlugin(
 
     function createControlClient(): PluginControlClient {
       return dependencies.createControlClient({
-        socketPath: paths.socketPath,
+        socketPath: activePaths.socketPath,
         ownerToken,
         onRouteLost(takeover): void {
           ownedHostnames.delete(takeover.hostname);
@@ -380,11 +534,12 @@ function createPlugin(
           }
           let candidate: PluginControlClient | null = null;
           try {
-            await dependencies.ensureInfrastructure({
+            const infrastructure = await dependencies.ensureInfrastructure({
               namespace,
-              paths,
+              paths: requestedPaths,
               controlSocket: options.controlSocket,
             });
+            useInfrastructureResult(infrastructure);
             const recoverableRoutes = routeInputs.filter(({ hostname }) =>
               ownedHostnames.has(hostname),
             );
@@ -442,11 +597,12 @@ function createPlugin(
           : {}),
       }));
       try {
-        await dependencies.ensureInfrastructure({
+        const infrastructure = await dependencies.ensureInfrastructure({
           namespace,
-          paths,
+          paths: requestedPaths,
           controlSocket: options.controlSocket,
         });
+        useInfrastructureResult(infrastructure);
         const controlClient = createControlClient();
         ownerToken = controlClient.ownerToken;
         client = controlClient;

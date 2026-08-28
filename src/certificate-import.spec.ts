@@ -1,4 +1,4 @@
-import { copyFile, lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -37,6 +37,24 @@ describe('CertificateImportStore', () => {
       expect((await lstat(record.keyPath)).mode & 0o777).toBe(0o600);
       expect((await lstat(path.dirname(record.keyPath))).mode & 0o777).toBe(0o700);
     }
+  });
+
+  it('does not duplicate a leaf certificate that is already first in the imported chain', async () => {
+    const sourceDirectory = path.join(temporaryDirectory, 'source-chain');
+    await mkdir(sourceDirectory);
+    await createTestCertificate(sourceDirectory, 'chain.example.test');
+    const certificatePath = path.join(sourceDirectory, 'certificate.pem');
+    const chainPath = path.join(sourceDirectory, 'chain.pem');
+    await copyFile(certificatePath, chainPath);
+
+    const record = await store.importCertificate({
+      hostname: 'chain.example.test',
+      certificatePath,
+      keyPath: path.join(sourceDirectory, 'key.pem'),
+      chainPath,
+    });
+
+    await expect(readFile(record.chainPath)).resolves.toEqual(await readFile(certificatePath));
   });
 
   it('rejects SAN and private-key mismatches', async () => {

@@ -1,6 +1,7 @@
 import type { OwnedRouteInput } from '../control-client.js';
 import type { ControlClientOptions } from './control-client-options.js';
 import type { ServiceState } from './service-state.js';
+import type { InvalidStartupServiceInstallation } from './service-installation-inventory.js';
 import type { StatePaths } from './state-paths.js';
 
 export interface PluginControlClient {
@@ -26,9 +27,20 @@ export interface PluginLogger {
   error: (message: string, error?: unknown) => void;
 }
 
+export interface PluginInfrastructureResult {
+  state: ServiceState;
+  namespace: string;
+  paths: StatePaths;
+  adoptedLegacy: boolean;
+  invalidInstallations?: InvalidStartupServiceInstallation[];
+}
+
 export interface PluginRuntimeDependencies {
   platform: NodeJS.Platform;
+  infrastructureMode?: 'canonical' | 'isolated';
   logger: PluginLogger;
-  ensureInfrastructure: (request: PluginInfrastructureRequest) => Promise<ServiceState>;
+  ensureInfrastructure: (
+    request: PluginInfrastructureRequest,
+  ) => Promise<ServiceState | PluginInfrastructureResult>;
   createControlClient: (options: ControlClientOptions) => PluginControlClient;
 }

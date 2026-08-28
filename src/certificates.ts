@@ -18,6 +18,7 @@ import {
   unlink,
   writeFile,
 } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { createSecureContext, type SecureContext } from 'node:tls';
 import { validateHostname } from './control-protocol.js';
@@ -37,9 +38,24 @@ const AUTHORITY_LOCK_STALE_MS = 30_000;
 const AUTHORITY_LOCK_TIMEOUT_MS = 30_000;
 const AUTHORITY_LOCK_RETRY_MS = 25;
 const EC_PUBLIC_KEY_OID = Buffer.from('06072a8648ce3d0201', 'hex');
+const BOOT_TIME_TOLERANCE_MS = 1_000;
+
+interface AuthorityLock {
+  pid: number;
+  startedAt: string;
+}
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
 }
 
 function execute(command: string, arguments_: string[]): Promise<void> {
@@ -154,7 +170,11 @@ export class CertificateManager {
       });
       if (handle) {
         try {
-          await handle.writeFile(`${process.pid}\n`);
+          const lock: AuthorityLock = {
+            pid: process.pid,
+            startedAt: new Date().toISOString(),
+          };
+          await handle.writeFile(`${JSON.stringify(lock)}\n`);
           return await operation();
         } finally {
           await handle.close();
@@ -165,8 +185,37 @@ export class CertificateManager {
           });
         }
       }
-      const stale = await lstat(lockPath)
-        .then((stats) => !stats.isFile() || Date.now() - stats.mtimeMs > AUTHORITY_LOCK_STALE_MS)
+      const stale = await Promise.all([readFile(lockPath, 'utf8'), lstat(lockPath)])
+        .then(([contents, stats]) => {
+          if (!stats.isFile()) {
+            return true;
+          }
+          let lock: AuthorityLock | null = null;
+          try {
+            const value = JSON.parse(contents) as Partial<AuthorityLock>;
+            if (
+              Number.isSafeInteger(value.pid) &&
+              Number(value.pid) > 0 &&
+              typeof value.startedAt === 'string' &&
+              Number.isFinite(Date.parse(value.startedAt))
+            ) {
+              lock = value as AuthorityLock;
+            }
+          } catch {
+            lock = null;
+          }
+          const pid = lock?.pid ?? Number(contents.trim());
+          const bootBoundary = Date.now() - os.uptime() * 1_000 - BOOT_TIME_TOLERANCE_MS;
+          const predatesBoot = lock
+            ? Date.parse(lock.startedAt) < bootBoundary
+            : stats.mtimeMs < bootBoundary;
+          if (predatesBoot) {
+            return true;
+          }
+          return Number.isSafeInteger(pid) && pid > 0
+            ? !isProcessRunning(pid)
+            : Date.now() - stats.mtimeMs > AUTHORITY_LOCK_STALE_MS;
+        })
         .catch((lockError: NodeJS.ErrnoException) => lockError.code === 'ENOENT');
       if (stale) {
         await unlink(lockPath).catch((lockError: NodeJS.ErrnoException) => {

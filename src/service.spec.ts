@@ -149,6 +149,63 @@ describe('LocalTlsService', () => {
     await service.stopStartedDaemon();
   });
 
+  it('clears a pre-reboot lock even when its PID has been reused', async () => {
+    const paths = getStatePaths(namespace, process.platform, { HOME: temporaryDirectory });
+    await ensureStatePaths(paths);
+    await writeFile(
+      paths.lockPath,
+      `${JSON.stringify({ pid: process.pid, startedAt: new Date(0).toISOString() })}\n`,
+    );
+    const service = new LocalTlsService({
+      paths,
+      opensslPath: 'openssl',
+      namespace,
+      port: 0,
+      startupTimeoutMs: 1000,
+      retryDelayMs: 10,
+    });
+
+    const state = await service.ensureRunning();
+    daemon = null;
+
+    expect(state.pid).toBe(process.pid);
+    await expect(access(paths.lockPath)).rejects.toThrow();
+    await service.stopStartedDaemon();
+  });
+
+  it('replaces pre-reboot metadata even when its PID has been reused', async () => {
+    const paths = getStatePaths(namespace, process.platform, { HOME: temporaryDirectory });
+    await ensureStatePaths(paths);
+    await writeFile(
+      paths.stateFile,
+      `${JSON.stringify({
+        version: 1,
+        pid: process.pid,
+        namespace,
+        socketPath: paths.socketPath,
+        startedAt: new Date(0).toISOString(),
+        protocolVersion: 1,
+        port: 443,
+        caFingerprint: 'pre-reboot',
+      })}\n`,
+    );
+    const service = new LocalTlsService({
+      paths,
+      opensslPath: 'openssl',
+      namespace,
+      port: 0,
+      startupTimeoutMs: 1000,
+      retryDelayMs: 10,
+    });
+
+    const state = await service.ensureRunning();
+    daemon = null;
+
+    expect(state.pid).toBe(process.pid);
+    expect(state.startedAt).not.toBe(new Date(0).toISOString());
+    await service.stopStartedDaemon();
+  });
+
   it('returns an already healthy daemon without starting another one', async () => {
     const paths = getStatePaths(namespace, process.platform, { HOME: temporaryDirectory });
     daemon = new LocalTlsDaemon({ paths, opensslPath: 'openssl', namespace, port: 0 });

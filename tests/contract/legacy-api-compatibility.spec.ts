@@ -97,7 +97,7 @@ describe('legacy public API compatibility', () => {
       expect.objectContaining({ namespace: 'legacy-team' }),
     );
     expect(warnings).toEqual([
-      '`caddyApiUrl` is deprecated and ignored because the local TLS service has no HTTP Admin API. Use `controlSocket` when a custom control channel is required.',
+      '`caddyApiUrl` is deprecated and ignored because the local TLS service has no HTTP Admin API. Alternate control channels are limited to explicitly injected test infrastructure.',
       '`caddyAdminOrigin` is deprecated and ignored because the local TLS service has no HTTP Admin API.',
     ]);
     httpServer.emit('close');

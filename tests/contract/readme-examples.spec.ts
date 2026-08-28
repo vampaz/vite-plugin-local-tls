@@ -50,6 +50,10 @@ describe('README contract', () => {
       'Linux',
       'diagnostics',
       'Uninstall',
+      'one machine-wide',
+      'legacy startup services',
+      'never downgrades',
+      'ephemeral',
     ]) {
       expect(readme).toContain(topic);
     }

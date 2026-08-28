@@ -1,10 +1,11 @@
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium } from '@playwright/test';
 import { expect, test } from './fixtures.js';
 import { startServer } from '../fixtures/server-process.js';
+import { getStatePaths } from '../../src/state-paths.js';
 
 function run(
   command: string,
@@ -35,13 +36,18 @@ function run(
   });
 }
 
-test('runs the packed default plugin on trusted port 443 with WSS HMR', async ({ e2e }) => {
+test('runs the packed default plugin ephemerally on trusted port 443 with WSS HMR', async ({
+  e2e,
+}) => {
   test.skip(
-    process.env.VITE_TLS_DEFAULT_PATH !== 'true',
-    'The privileged default-path proof runs in its isolated workflow step.',
+    process.env.VITE_TLS_DEFAULT_PATH !== 'true' ||
+      process.platform !== 'linux' ||
+      process.env.CI !== 'true',
+    'The privileged default-path proof runs only on its disposable Linux CI host.',
   );
   const domain = 'default-path.localhost';
   const environment = { ...process.env, HOME: e2e.stateHome };
+  const canonicalPaths = getStatePaths('default', process.platform, environment);
   const cliPath = path.join(
     e2e.fixtureDirectory,
     'node_modules',
@@ -51,16 +57,15 @@ test('runs the packed default plugin on trusted port 443 with WSS HMR', async ({
   const nssDirectory = path.join(e2e.stateHome, '.pki', 'nssdb');
   const browserProfile = await mkdtemp(path.join(os.tmpdir(), 'vite-local-tls-browser-'));
   let server: Awaited<ReturnType<typeof startServer>> | null = null;
-  let serviceInstalled = false;
+  let trustInstalled = false;
   try {
-    await run(cliPath, ['trust', '--namespace', e2e.namespace], e2e.fixtureDirectory, environment);
-    await run(
-      cliPath,
-      ['service', 'install', '--namespace', e2e.namespace],
-      e2e.fixtureDirectory,
-      environment,
-    );
-    serviceInstalled = true;
+    const doctor = JSON.parse(
+      await run(cliPath, ['doctor'], e2e.fixtureDirectory, environment),
+    ) as { trust?: { trusted?: boolean } | null };
+    if (doctor.trust?.trusted !== true) {
+      trustInstalled = true;
+      await run(cliPath, ['trust'], e2e.fixtureDirectory, environment);
+    }
     await mkdir(nssDirectory, { recursive: true });
     await run(
       'certutil',
@@ -75,11 +80,11 @@ test('runs the packed default plugin on trusted port 443 with WSS HMR', async ({
         '-d',
         `sql:${nssDirectory}`,
         '-n',
-        `vite-local-tls-${e2e.namespace}`,
+        'vite-local-tls-default',
         '-t',
         'C,,',
         '-i',
-        e2e.paths.caCertificatePath,
+        canonicalPaths.caCertificatePath,
       ],
       e2e.root,
       environment,
@@ -110,22 +115,35 @@ test('runs the packed default plugin on trusted port 443 with WSS HMR', async ({
     } finally {
       await context.close();
     }
+    await server.stop('SIGKILL');
+    server = null;
   } finally {
     await server?.stop().catch(() => undefined);
-    if (serviceInstalled) {
-      await run(
-        cliPath,
-        ['service', 'uninstall', '--namespace', e2e.namespace],
-        e2e.fixtureDirectory,
-        environment,
-      ).catch(() => undefined);
+    const persistentStateProblems: string[] = [];
+    try {
+      for (const filename of [
+        'service-install.json',
+        'service-install-v2.json',
+        'service-install-previous.json',
+      ]) {
+        try {
+          await access(path.join(canonicalPaths.stateDirectory, filename));
+          persistentStateProblems.push(`${filename} still exists`);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+            persistentStateProblems.push(
+              `${filename}: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
+      }
+    } finally {
+      if (trustInstalled) {
+        await run(cliPath, ['untrust'], e2e.fixtureDirectory, environment).catch(() => undefined);
+      }
+      await rm(canonicalPaths.runtimeDirectory, { recursive: true, force: true });
+      await rm(browserProfile, { recursive: true, force: true });
     }
-    await run(
-      cliPath,
-      ['untrust', '--namespace', e2e.namespace],
-      e2e.fixtureDirectory,
-      environment,
-    ).catch(() => undefined);
-    await rm(browserProfile, { recursive: true, force: true });
+    expect(persistentStateProblems).toEqual([]);
   }
 });

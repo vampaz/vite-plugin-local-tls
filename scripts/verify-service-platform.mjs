@@ -1,20 +1,28 @@
 import { spawn } from 'node:child_process';
-import { readFile, rm } from 'node:fs/promises';
+import { access, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { connect } from 'node:tls';
 import { fileURLToPath } from 'node:url';
 import { getStatePaths } from '../dist/testing.js';
 
+if (process.env.CI !== 'true' || process.env.VITE_LOCAL_TLS_DISPOSABLE_SERVICE_SMOKE !== 'true') {
+  throw new Error(
+    'This destructive startup-service smoke test may run only on its explicitly disposable CI host.',
+  );
+}
+
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
 const cliPath = path.join(repositoryRoot, 'dist', 'cli.js');
-const namespace = `platform-smoke-${process.pid}`;
+const namespace = 'default';
 
 function runCli(arguments_, interactive = false) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [cliPath, ...arguments_, '--namespace', namespace], {
+    const child = spawn(process.execPath, [cliPath, ...arguments_], {
       cwd: repositoryRoot,
       env: process.env,
       stdio: interactive ? 'inherit' : ['ignore', 'pipe', 'pipe'],
+      timeout: 120_000,
+      killSignal: 'SIGKILL',
     });
     const output = [];
     const errors = [];
@@ -39,6 +47,8 @@ function capture(command, arguments_) {
       cwd: repositoryRoot,
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 15_000,
+      killSignal: 'SIGKILL',
     });
     const output = [];
     const errors = [];
@@ -99,8 +109,90 @@ function parseStatus(output) {
   return status;
 }
 
+function assertHealthyDoctor(output) {
+  const doctor = JSON.parse(output);
+  const startupService = doctor?.startupService;
+  const canonical = startupService?.installations?.filter(
+    (installation) => installation.role === 'canonical',
+  );
+  if (
+    !doctor ||
+    !Array.isArray(doctor.errors) ||
+    doctor.errors.some((error) => error.check === 'startupService') ||
+    !startupService ||
+    !Array.isArray(startupService.invalidInstallations) ||
+    startupService.invalidInstallations.length > 0 ||
+    !Array.isArray(canonical) ||
+    canonical.length !== 1 ||
+    canonical[0].namespace !== 'default' ||
+    canonical[0].status?.running !== true ||
+    canonical[0].status?.compatible !== true ||
+    startupService.canonicalUpdateStatus !== 'current'
+  ) {
+    throw new Error(`Installed service failed doctor validation: ${output}`);
+  }
+}
+
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function commandSucceeds(command, arguments_) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, arguments_, {
+      cwd: repositoryRoot,
+      env: process.env,
+      stdio: 'ignore',
+      timeout: 15_000,
+      killSignal: 'SIGKILL',
+    });
+    child.once('error', reject);
+    child.once('exit', (code, signal) => {
+      if (signal) {
+        reject(new Error(`${command} ${arguments_.join(' ')} was terminated by ${signal}.`));
+        return;
+      }
+      resolve(code === 0);
+    });
+  });
+}
+
+async function assertPathAbsent(filePath) {
+  try {
+    await access(filePath);
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return;
+    }
+    throw error;
+  }
+  throw new Error(`Startup-service cleanup left ${filePath}.`);
+}
+
+async function assertStartupServiceRemoved(record) {
+  const paths = getStatePaths(namespace);
+  await Promise.all([
+    assertPathAbsent(path.join(paths.stateDirectory, 'service-install.json')),
+    assertPathAbsent(path.join(paths.stateDirectory, 'service-install-v2.json')),
+    assertPathAbsent(path.join(paths.stateDirectory, 'service-install-previous.json')),
+    assertPathAbsent(record.runtimeDirectory),
+    ...(record.definitionPath ? [assertPathAbsent(record.definitionPath)] : []),
+  ]);
+  const command =
+    process.platform === 'darwin'
+      ? ['launchctl', ['print', `system/${record.identifier}`]]
+      : process.platform === 'linux'
+        ? ['systemctl', ['cat', `${record.identifier}.service`]]
+        : ['schtasks.exe', ['/Query', '/TN', record.identifier]];
+  let absentChecks = 0;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    absentChecks = (await commandSucceeds(command[0], command[1])) ? 0 : absentChecks + 1;
+    if (absentChecks === 2) {
+      return;
+    }
+    await delay(100);
+  }
+  throw new Error(`Startup manager still reports ${record.identifier} after uninstall.`);
 }
 
 async function waitForRunningService() {
@@ -141,46 +233,60 @@ function connectToTlsListener() {
   });
 }
 
-let installed = false;
+let installAttempted = false;
 let activeConnection = null;
+let uninstallSucceeded = false;
+let installedRecord = null;
 try {
+  installAttempted = true;
   await runCli(['service', 'install'], true);
-  installed = true;
+  installedRecord = JSON.parse(
+    await readFile(
+      path.join(getStatePaths(namespace).stateDirectory, 'service-install-v2.json'),
+      'utf8',
+    ),
+  );
   const firstStatus = await waitForRunningService();
+  assertHealthyDoctor(await runCli(['doctor']));
   activeConnection = await connectToTlsListener();
   activeConnection.on('error', () => undefined);
-  if (firstStatus.state.namespace !== namespace) {
+  if (firstStatus.state.namespace !== 'default') {
     throw new Error(`Service namespace mismatch: ${JSON.stringify(firstStatus)}`);
   }
-  if (process.platform === 'darwin') {
-    await runCli(['service', 'install'], true);
-    const replacementStatus = await waitForRunningService();
-    const replacementConnection = await connectToTlsListener();
-    replacementConnection.destroy();
-    if (replacementStatus.state.pid === firstStatus.state.pid) {
-      throw new Error(
-        `macOS service replacement reused the old process: ${JSON.stringify(replacementStatus)}`,
-      );
-    }
+  await runCli(['service', 'install'], true);
+  const replacementStatus = await waitForRunningService();
+  const replacementConnection = await connectToTlsListener();
+  replacementConnection.destroy();
+  if (replacementStatus.state.pid === firstStatus.state.pid) {
+    throw new Error(
+      `${process.platform} service replacement reused the old process: ${JSON.stringify(replacementStatus)}`,
+    );
   }
   console.log(
-    process.platform === 'darwin'
-      ? 'Verified port-443 startup service installation and live-connection replacement on macOS.'
-      : `Verified port-443 startup service installation on ${process.platform}.`,
+    `Verified port-443 startup service installation and live-connection replacement on ${process.platform}.`,
   );
 } finally {
   activeConnection?.destroy();
-  if (installed) {
-    await runCli(['service', 'uninstall'], true).catch((error) => {
-      console.error(error);
-      process.exitCode = 1;
-    });
+  if (installAttempted) {
+    await runCli(['service', 'uninstall'], true)
+      .then(async () => {
+        if (installedRecord) {
+          await assertStartupServiceRemoved(installedRecord);
+        }
+        uninstallSucceeded = true;
+      })
+      .catch((error) => {
+        console.error(error);
+        process.exitCode = 1;
+      });
   }
-  const paths = getStatePaths(namespace);
-  await Promise.all([
-    rm(paths.stateDirectory, { recursive: true, force: true }),
-    process.platform === 'win32'
-      ? Promise.resolve()
-      : rm(paths.runtimeDirectory, { recursive: true, force: true }),
-  ]);
+  if (!installAttempted || uninstallSucceeded) {
+    const paths = getStatePaths(namespace);
+    await Promise.all([
+      rm(paths.stateDirectory, { recursive: true, force: true }),
+      process.platform === 'win32'
+        ? Promise.resolve()
+        : rm(paths.runtimeDirectory, { recursive: true, force: true }),
+    ]);
+  }
 }

@@ -295,11 +295,23 @@ export async function startServer(
 
 export async function disposeE2eContext(context: E2eContext): Promise<void> {
   await Promise.all([...context.servers].map((server) => server.stop().catch(() => undefined)));
+  const canonicalPaths = getStatePaths('default', process.platform, {
+    ...process.env,
+    HOME: context.stateHome,
+  });
+  const removeCanonicalRuntime =
+    process.platform !== 'win32' &&
+    process.env.CI === 'true' &&
+    process.env.VITE_TLS_DEFAULT_PATH === 'true' &&
+    canonicalPaths.runtimeDirectory !== context.paths.runtimeDirectory;
   await Promise.all([
     rm(context.root, { recursive: true, force: true }),
     process.platform === 'win32'
       ? Promise.resolve()
       : rm(context.paths.runtimeDirectory, { recursive: true, force: true }),
+    removeCanonicalRuntime
+      ? rm(canonicalPaths.runtimeDirectory, { recursive: true, force: true })
+      : Promise.resolve(),
   ]);
 }
 

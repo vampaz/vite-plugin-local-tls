@@ -26,6 +26,13 @@ function publicKeysMatch(certificate: X509Certificate, privateKeyPem: Buffer): b
   return Buffer.from(publicFromPrivate).equals(Buffer.from(certificatePublicKey));
 }
 
+function completeCertificateChain(certificatePem: Buffer, chainPem: Buffer): Buffer {
+  if (chainPem.subarray(0, certificatePem.length).equals(certificatePem)) {
+    return chainPem;
+  }
+  return Buffer.concat([certificatePem, chainPem]);
+}
+
 export class CertificateImportStore {
   readonly #options: CertificateImportStoreOptions;
 
@@ -63,7 +70,9 @@ export class CertificateImportStore {
     try {
       await writeFile(certificatePath, certificatePem, { mode: 0o644 });
       await writeFile(keyPath, privateKeyPem, { mode: 0o600 });
-      await writeFile(chainPath, Buffer.concat([certificatePem, chainPem]), { mode: 0o644 });
+      await writeFile(chainPath, completeCertificateChain(certificatePem, chainPem), {
+        mode: 0o644,
+      });
       await writeFile(recordPath, `${JSON.stringify(finalRecord, null, 2)}\n`, { mode: 0o600 });
       if (process.platform !== 'win32') {
         await chmod(temporaryDirectory, 0o700);

@@ -1,6 +1,10 @@
 import { execFile } from 'node:child_process';
-import type { Server } from 'node:net';
-import type { ProxyListenerOptions, ProxyListenerSet } from './interfaces/proxy-listeners.js';
+import type { Socket } from 'node:net';
+import type {
+  ProxyListenerOptions,
+  ProxyListenerServer,
+  ProxyListenerSet,
+} from './interfaces/proxy-listeners.js';
 
 export class ProxyListenerError extends Error {
   readonly code?: string;
@@ -16,7 +20,7 @@ export class ProxyListenerError extends Error {
   }
 }
 
-function listen(server: Server, host: string, port: number): Promise<number> {
+function listen(server: ProxyListenerServer, host: string, port: number): Promise<number> {
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen({ host, port, ipv6Only: host === '::1' }, () => {
@@ -31,8 +35,20 @@ function listen(server: Server, host: string, port: number): Promise<number> {
   });
 }
 
-function closeServer(server: Server): Promise<void> {
+function trackConnections(server: ProxyListenerServer): Set<Socket> {
+  const connections = new Set<Socket>();
+  server.on('connection', (socket) => {
+    connections.add(socket);
+    socket.once('close', () => connections.delete(socket));
+  });
+  return connections;
+}
+
+function closeServer(server: ProxyListenerServer, connections: Set<Socket>): Promise<void> {
   if (!server.listening) {
+    for (const socket of connections) {
+      socket.destroy();
+    }
     return Promise.resolve();
   }
   return new Promise((resolve, reject) => {
@@ -43,6 +59,9 @@ function closeServer(server: Server): Promise<void> {
       }
       resolve();
     });
+    for (const socket of connections) {
+      socket.destroy();
+    }
   });
 }
 
@@ -82,6 +101,7 @@ export async function startProxyListeners(
 ): Promise<ProxyListenerSet> {
   const requestedPort = options.port ?? 443;
   const ipv4 = options.createServer();
+  const ipv4Connections = trackConnections(ipv4);
   let port: number;
   try {
     port = await listen(ipv4, '127.0.0.1', requestedPort);
@@ -90,10 +110,11 @@ export async function startProxyListeners(
   }
 
   const ipv6 = options.createServer();
+  const ipv6Connections = trackConnections(ipv6);
   try {
     await listen(ipv6, '::1', port);
   } catch (error) {
-    await closeServer(ipv4);
+    await closeServer(ipv4, ipv4Connections);
     throw await buildListenerError(error, '::1', port);
   }
 
@@ -102,7 +123,7 @@ export async function startProxyListeners(
     ipv4,
     ipv6,
     async close(): Promise<void> {
-      await Promise.all([closeServer(ipv4), closeServer(ipv6)]);
+      await Promise.all([closeServer(ipv4, ipv4Connections), closeServer(ipv6, ipv6Connections)]);
     },
   };
 }

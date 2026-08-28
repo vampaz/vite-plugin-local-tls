@@ -67,4 +67,6 @@ jobs:
       - run: npm run build
 
       - name: Install, probe, and remove the platform startup service
+        env:
+          VITE_LOCAL_TLS_DISPOSABLE_SERVICE_SMOKE: 'true'
         run: node scripts/verify-service-platform.mjs

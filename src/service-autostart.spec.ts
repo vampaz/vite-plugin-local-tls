@@ -304,7 +304,7 @@ describe('local TLS service auto-start', () => {
       const installService = vi.fn(async () => {
         await installStartupService({
           platform: 'darwin',
-          namespace: 'test',
+          namespace: 'default',
           paths,
           nodePath: '/opt/homebrew/bin/node',
           cliPath,
