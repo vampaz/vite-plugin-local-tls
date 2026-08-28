@@ -63,8 +63,8 @@ describe('Windows startup service', () => {
         }
         return {
           stdout: taskXml(
-            installedNodePath,
-            `&quot;${path.join(runtimeDirectory, 'c.js')}&quot; proxy start --service --service-config &quot;${configurationPath}&quot;`,
+            `"${installedNodePath}"`,
+            `"${path.join(runtimeDirectory, 'c.js')}" proxy start --service --service-config "${configurationPath}"`,
           ),
           stderr: '',
         };

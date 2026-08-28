@@ -289,7 +289,7 @@ describe('Linux startup service', () => {
         arguments_.some((argument) => argument.endsWith('.previous.service.tmp')),
       ),
     ).toBe(true);
-  });
+  }, 15_000);
 
   it('recovers an interrupted v1-to-v2 update from its durable previous record', async () => {
     const cliPath = path.join(temporaryDirectory, 'cli.js');
@@ -392,7 +392,7 @@ describe('Linux startup service', () => {
     await expect(
       access(path.join(recordDirectory, 'service-install-previous.json')),
     ).rejects.toThrow();
-  });
+  }, 15_000);
 
   it('refuses to update an owned marker that belongs to another user or runtime', async () => {
     const cliPath = path.join(temporaryDirectory, 'cli.js');

@@ -154,16 +154,26 @@ function xmlWithoutComments(contents: string): string {
   return contents.replaceAll(/<!--[\s\S]*?-->/g, '');
 }
 
-function singleXmlElement(contents: string, element: string): string | null {
-  const expression = new RegExp(`<${element}>([\\s\\S]*?)</${element}>`, 'g');
-  const matches = [...contents.matchAll(expression)];
-  return matches.length === 1 ? xmlDecode(matches[0]![1]!) : null;
-}
-
 function singleXmlContainer(contents: string, element: string): string | null {
   const expression = new RegExp(`<${element}(?:\\s[^>]*)?>([\\s\\S]*?)</${element}>`, 'g');
   const matches = [...contents.matchAll(expression)];
   return matches.length === 1 ? matches[0]![1]! : null;
+}
+
+function singleWindowsExecAction(contents: string): { command: string; arguments_: string } | null {
+  const exec = /^\s*<Exec(?:\s+id="[^"<>&]*")?>([\s\S]*?)<\/Exec>\s*$/.exec(contents);
+  if (!exec) {
+    return null;
+  }
+  const action = /^\s*<Command>([\s\S]*?)<\/Command>\s*<Arguments>([\s\S]*?)<\/Arguments>\s*$/.exec(
+    exec[1]!,
+  );
+  if (!action) {
+    return null;
+  }
+  const command = xmlDecode(action[1]!);
+  const arguments_ = xmlDecode(action[2]!);
+  return command === null || arguments_ === null ? null : { command, arguments_ };
 }
 
 function ownerMarker(record: ServiceInstallationRecord): string {
@@ -1776,46 +1786,19 @@ export async function assertOwnedWindowsStartupTask(
   const taskArguments = windowsTaskArgumentCandidates(record.cliPath, configurationPath);
   const taskXml = xmlWithoutComments(task.stdout);
   const actions = singleXmlContainer(taskXml, 'Actions');
-  const action = actions ? singleXmlContainer(actions, 'Exec') : null;
-  const expectedActions = taskPaths.flatMap((taskPath) =>
-    taskArguments.map((arguments_) =>
-      [
-        '<Command>',
-        xmlEscape(taskPath),
-        '</Command>',
-        '<Arguments>',
-        xmlEscape(arguments_),
-        '</Arguments>',
-      ].join(''),
-    ),
-  );
-  const normalizedActions = expectedActions.map((expectedAction) =>
-    normalizeXmlDefinition(expectedAction),
-  );
+  const action = actions ? singleWindowsExecAction(actions) : null;
   const ownsTask =
     ownsConfiguration &&
-    actions !== null &&
     action !== null &&
-    normalizedActions.some(
-      (expectedAction) => normalizeXmlDefinition(actions) === `<Exec>${expectedAction}</Exec>`,
-    ) &&
-    normalizedActions.includes(normalizeXmlDefinition(action)) &&
-    taskPaths.includes(singleXmlElement(taskXml, 'Command') ?? '') &&
-    taskArguments.includes(singleXmlElement(taskXml, 'Arguments') ?? '');
+    taskPaths.includes(action.command) &&
+    taskArguments.includes(action.arguments_);
   if (!ownsTask) {
     throw new Error(
       `Refusing to operate on unrelated scheduled task: ${record.identifier}. ` +
         `Owned configuration: ${String(ownsConfiguration)}; ` +
-        `observed command: ${JSON.stringify(singleXmlElement(taskXml, 'Command'))}; ` +
-        `observed arguments: ${JSON.stringify(singleXmlElement(taskXml, 'Arguments'))}; ` +
-        `exact single action: ${String(
-          actions !== null &&
-            action !== null &&
-            normalizedActions.some(
-              (expectedAction) =>
-                normalizeXmlDefinition(actions) === `<Exec>${expectedAction}</Exec>`,
-            ),
-        )}.`,
+        `observed command: ${JSON.stringify(action?.command ?? null)}; ` +
+        `observed arguments: ${JSON.stringify(action?.arguments_ ?? null)}; ` +
+        `exact single action: ${String(action !== null)}.`,
     );
   }
 }
