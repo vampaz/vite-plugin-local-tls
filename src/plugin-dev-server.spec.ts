@@ -334,6 +334,8 @@ describe('Vite dev-server registration', () => {
     await flushPromises();
 
     expect(runtime.client.close).toHaveBeenCalledOnce();
+    expect(runtime.dependencies.ensureInfrastructure).toHaveBeenCalledOnce();
+    expect(runtime.client.register).toHaveBeenCalledOnce();
     expect(runtime.errors).toEqual([
       {
         message: 'Failed to register local TLS routes for one.localhost, two.localhost.',

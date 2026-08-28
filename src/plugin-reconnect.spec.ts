@@ -160,6 +160,46 @@ afterEach(async () => {
 });
 
 describe('plugin daemon recovery', () => {
+  it('recovers initial route setup after an external service update', async () => {
+    const clients: MockClient[] = [];
+    const runtime = createRuntime((options) => {
+      const client = createClient(options);
+      clients.push(client);
+      return client;
+    });
+    let serviceCurrent = false;
+    runtime.ensureInfrastructure.mockImplementation(async ({ namespace, paths }) => {
+      if (!serviceCurrent) {
+        throw Object.assign(new Error('The installed local TLS service is outdated.'), {
+          code: 'SERVICE_UPDATE_REQUIRED',
+        });
+      }
+      return {
+        version: 1,
+        pid: process.pid,
+        namespace,
+        socketPath: paths.socketPath,
+        startedAt: new Date().toISOString(),
+        protocolVersion: 1,
+        port: 443,
+        caFingerprint: 'fingerprint',
+      };
+    });
+
+    await startPlugin(runtime.dependencies, ['updated.localhost']);
+    expect(runtime.errors).toContain('Failed to register local TLS routes for updated.localhost.');
+    expect(clients).toHaveLength(0);
+
+    serviceCurrent = true;
+    await vi.waitFor(() => expect(clients[0]?.register).toHaveBeenCalledOnce(), { timeout: 2000 });
+
+    expect(runtime.logs).toContain('Recovered local TLS routes for updated.localhost.');
+
+    clients[0]?.options.onDisconnect?.(new Error('daemon restarted'));
+    await vi.waitFor(() => expect(clients[1]?.register).toHaveBeenCalledOnce());
+    expect(clients[1]?.ownerToken).toBe(clients[0]?.ownerToken);
+  });
+
   it('restarts infrastructure and re-registers the same owner claims after disconnect', async () => {
     const clients: MockClient[] = [];
     const runtime = createRuntime((options) => {
