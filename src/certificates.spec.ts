@@ -67,7 +67,8 @@ describe('CertificateManager CA', () => {
     });
     await once(holder, 'spawn');
     const lockPath = `${paths.caStatePath}.lock`;
-    await writeFile(lockPath, `${holder.pid}\n`);
+    const lock = `${JSON.stringify({ pid: holder.pid, startedAt: new Date().toISOString() })}\n`;
+    await writeFile(lockPath, lock);
     const old = new Date(Date.now() - 60_000);
     await utimes(lockPath, old, old);
     const authority = new CertificateManager({
@@ -76,7 +77,7 @@ describe('CertificateManager CA', () => {
     }).ensureCertificateAuthority();
     try {
       await new Promise((resolve) => setTimeout(resolve, 75));
-      await expect(readFile(lockPath, 'utf8')).resolves.toBe(`${holder.pid}\n`);
+      await expect(readFile(lockPath, 'utf8')).resolves.toBe(lock);
     } finally {
       const exit = once(holder, 'exit');
       holder.kill();

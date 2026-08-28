@@ -1074,12 +1074,12 @@ function macosQuiesceCommands(
             rollbackAfterSuccess: [
               {
                 command: 'launchctl',
-                arguments_: ['bootstrap', 'system', record.definitionPath!],
-                allowFailure: true,
+                arguments_: ['enable', `system/${record.identifier}`],
               },
               {
                 command: 'launchctl',
-                arguments_: ['enable', `system/${record.identifier}`],
+                arguments_: ['bootstrap', 'system', record.definitionPath!],
+                allowFailure: true,
               },
               {
                 command: 'launchctl',
@@ -1316,6 +1316,7 @@ async function installMacos(
           identifier,
         ],
       },
+      { command: 'launchctl', arguments_: ['enable', `system/${identifier}`] },
       {
         command: 'launchctl',
         arguments_: ['bootstrap', 'system', definitionPath],
@@ -1342,7 +1343,6 @@ async function installMacos(
             }
           : {}),
       },
-      { command: 'launchctl', arguments_: ['enable', `system/${identifier}`] },
       {
         command: 'launchctl',
         arguments_: ['kickstart', '-k', `system/${identifier}`],
@@ -1769,7 +1769,10 @@ export async function assertOwnedWindowsStartupTask(
     configuration.owner === '@vampaz/vite-plugin-local-tls' &&
     configuration.namespace === record.namespace &&
     configuration.controlSocket === record.controlSocket;
-  const taskPaths = windowsTaskPathCandidates(record.nodePath);
+  const taskPaths = windowsTaskPathCandidates(record.nodePath).flatMap((taskPath) => [
+    taskPath,
+    windowsQuote(taskPath),
+  ]);
   const taskArguments = windowsTaskArgumentCandidates(record.cliPath, configurationPath);
   const taskXml = xmlWithoutComments(task.stdout);
   const actions = singleXmlContainer(taskXml, 'Actions');
@@ -1800,7 +1803,20 @@ export async function assertOwnedWindowsStartupTask(
     taskPaths.includes(singleXmlElement(taskXml, 'Command') ?? '') &&
     taskArguments.includes(singleXmlElement(taskXml, 'Arguments') ?? '');
   if (!ownsTask) {
-    throw new Error(`Refusing to operate on unrelated scheduled task: ${record.identifier}`);
+    throw new Error(
+      `Refusing to operate on unrelated scheduled task: ${record.identifier}. ` +
+        `Owned configuration: ${String(ownsConfiguration)}; ` +
+        `observed command: ${JSON.stringify(singleXmlElement(taskXml, 'Command'))}; ` +
+        `observed arguments: ${JSON.stringify(singleXmlElement(taskXml, 'Arguments'))}; ` +
+        `exact single action: ${String(
+          actions !== null &&
+            action !== null &&
+            normalizedActions.some(
+              (expectedAction) =>
+                normalizeXmlDefinition(actions) === `<Exec>${expectedAction}</Exec>`,
+            ),
+        )}.`,
+    );
   }
 }
 

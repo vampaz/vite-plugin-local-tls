@@ -160,8 +160,12 @@ describe('macOS startup service', () => {
       expect.any(String),
       'com.vampaz.vite-local-tls.default',
     ]);
-    expect(installSequence[6]?.arguments_).toEqual(['bootstrap', 'system', definitionPath]);
-    expect(installSequence[6]?.rollbackAfterSuccess).toEqual([
+    expect(installSequence[6]?.arguments_).toEqual([
+      'enable',
+      'system/com.vampaz.vite-local-tls.default',
+    ]);
+    expect(installSequence[7]?.arguments_).toEqual(['bootstrap', 'system', definitionPath]);
+    expect(installSequence[7]?.rollbackAfterSuccess).toEqual([
       {
         command: 'launchctl',
         arguments_: ['bootout', 'system/com.vampaz.vite-local-tls.default'],
