@@ -377,15 +377,31 @@ function windowsTaskCommand(nodePath: string, cliPath: string, configurationPath
   )}`;
 }
 
-function windowsTaskArguments(cliPath: string, configurationPath: string): string {
+function windowsTaskArgumentsForPaths(cliPath: string, configurationPath: string): string {
   return [
-    windowsQuote(windowsTaskPath(cliPath)),
+    windowsQuote(cliPath),
     'proxy',
     'start',
     '--service',
     '--service-config',
-    windowsQuote(windowsTaskPath(configurationPath)),
+    windowsQuote(configurationPath),
   ].join(' ');
+}
+
+function windowsTaskArguments(cliPath: string, configurationPath: string): string {
+  return windowsTaskArgumentsForPaths(windowsTaskPath(cliPath), windowsTaskPath(configurationPath));
+}
+
+function windowsTaskPathCandidates(filePath: string): string[] {
+  return [...new Set([windowsTaskPath(filePath), filePath])];
+}
+
+function windowsTaskArgumentCandidates(cliPath: string, configurationPath: string): string[] {
+  return windowsTaskPathCandidates(cliPath).flatMap((taskCliPath) =>
+    windowsTaskPathCandidates(configurationPath).map((taskConfigurationPath) =>
+      windowsTaskArgumentsForPaths(taskCliPath, taskConfigurationPath),
+    ),
+  );
 }
 
 function assertExpectedRecord(
@@ -1147,7 +1163,7 @@ async function installMacos(
   const temporaryCliPath = path.join(options.paths.stateDirectory, `${identifier}.cli.js.tmp`);
   const temporaryReadinessCliPath = path.join(
     options.paths.stateDirectory,
-    `${identifier}.readiness-cli.js.tmp`,
+    `${identifier}.readiness-cli.tmp.js`,
   );
   const temporaryInstalledRecordPath = path.join(
     options.paths.stateDirectory,
@@ -1753,27 +1769,36 @@ export async function assertOwnedWindowsStartupTask(
     configuration.owner === '@vampaz/vite-plugin-local-tls' &&
     configuration.namespace === record.namespace &&
     configuration.controlSocket === record.controlSocket;
-  const taskPath = windowsTaskPath(record.nodePath);
-  const taskArguments = windowsTaskArguments(record.cliPath, configurationPath);
+  const taskPaths = windowsTaskPathCandidates(record.nodePath);
+  const taskArguments = windowsTaskArgumentCandidates(record.cliPath, configurationPath);
   const taskXml = xmlWithoutComments(task.stdout);
   const actions = singleXmlContainer(taskXml, 'Actions');
   const action = actions ? singleXmlContainer(actions, 'Exec') : null;
-  const expectedAction = [
-    '<Command>',
-    xmlEscape(taskPath),
-    '</Command>',
-    '<Arguments>',
-    xmlEscape(taskArguments),
-    '</Arguments>',
-  ].join('');
+  const expectedActions = taskPaths.flatMap((taskPath) =>
+    taskArguments.map((arguments_) =>
+      [
+        '<Command>',
+        xmlEscape(taskPath),
+        '</Command>',
+        '<Arguments>',
+        xmlEscape(arguments_),
+        '</Arguments>',
+      ].join(''),
+    ),
+  );
+  const normalizedActions = expectedActions.map((expectedAction) =>
+    normalizeXmlDefinition(expectedAction),
+  );
   const ownsTask =
     ownsConfiguration &&
     actions !== null &&
     action !== null &&
-    normalizeXmlDefinition(actions) === `<Exec>${expectedAction}</Exec>` &&
-    normalizeXmlDefinition(action) === expectedAction &&
-    singleXmlElement(taskXml, 'Command') === taskPath &&
-    singleXmlElement(taskXml, 'Arguments') === taskArguments;
+    normalizedActions.some(
+      (expectedAction) => normalizeXmlDefinition(actions) === `<Exec>${expectedAction}</Exec>`,
+    ) &&
+    normalizedActions.includes(normalizeXmlDefinition(action)) &&
+    taskPaths.includes(singleXmlElement(taskXml, 'Command') ?? '') &&
+    taskArguments.includes(singleXmlElement(taskXml, 'Arguments') ?? '');
   if (!ownsTask) {
     throw new Error(`Refusing to operate on unrelated scheduled task: ${record.identifier}`);
   }

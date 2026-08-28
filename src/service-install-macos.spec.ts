@@ -189,7 +189,7 @@ describe('macOS startup service', () => {
         '--eval',
         expect.stringContaining('status.running === true'),
         process.execPath,
-        path.join(paths.stateDirectory, 'com.vampaz.vite-local-tls.default.readiness-cli.js.tmp'),
+        path.join(paths.stateDirectory, 'com.vampaz.vite-local-tls.default.readiness-cli.tmp.js'),
         'default',
         paths.socketPath,
       ],
