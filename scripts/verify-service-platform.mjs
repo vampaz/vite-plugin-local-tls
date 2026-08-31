@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { access, readFile, rm } from 'node:fs/promises';
+import { access, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { connect } from 'node:tls';
 import { fileURLToPath } from 'node:url';
@@ -157,6 +157,65 @@ function commandSucceeds(command, arguments_) {
   });
 }
 
+function runRequiredCommand(command, arguments_) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, arguments_, {
+      cwd: repositoryRoot,
+      env: process.env,
+      stdio: 'inherit',
+      timeout: 30_000,
+      killSignal: 'SIGKILL',
+    });
+    child.once('error', reject);
+    child.once('exit', (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(
+        new Error(
+          signal
+            ? `${command} ${arguments_.join(' ')} was terminated by ${signal}.`
+            : `${command} ${arguments_.join(' ')} exited ${String(code)}.`,
+        ),
+      );
+    });
+  });
+}
+
+async function poisonMacosRuntimeOwnership() {
+  if (process.platform !== 'darwin') {
+    return null;
+  }
+  const paths = getStatePaths(namespace);
+  const runtimeRoot = path.dirname(paths.runtimeDirectory);
+  const expectedRoot = `/tmp/vite-plugin-local-tls-${String(process.getuid())}`;
+  if (runtimeRoot !== expectedRoot) {
+    throw new Error(`Refusing to change unexpected macOS runtime root: ${runtimeRoot}`);
+  }
+  await runRequiredCommand('sudo', ['--', 'chown', '-R', '0', runtimeRoot]);
+  await runRequiredCommand('sudo', ['--', 'chmod', '0700', runtimeRoot]);
+  const details = await stat(runtimeRoot);
+  if (details.uid !== 0 || (details.mode & 0o777) !== 0o700) {
+    throw new Error(`Failed to reproduce root-owned macOS runtime state: ${runtimeRoot}`);
+  }
+  return runtimeRoot;
+}
+
+async function assertMacosRuntimeOwnershipRecovered(runtimeRoot) {
+  if (!runtimeRoot) {
+    return;
+  }
+  const [rootDetails, namespaceDetails] = await Promise.all([
+    stat(runtimeRoot),
+    stat(getStatePaths(namespace).runtimeDirectory),
+  ]);
+  const uid = process.getuid();
+  if (rootDetails.uid !== uid || namespaceDetails.uid !== uid) {
+    throw new Error(`macOS runtime ownership was not recovered for uid ${String(uid)}.`);
+  }
+}
+
 async function assertPathAbsent(filePath) {
   try {
     await access(filePath);
@@ -253,8 +312,10 @@ try {
   if (firstStatus.state.namespace !== 'default') {
     throw new Error(`Service namespace mismatch: ${JSON.stringify(firstStatus)}`);
   }
+  const poisonedRuntimeRoot = await poisonMacosRuntimeOwnership();
   await runCli(['service', 'install'], true);
   const replacementStatus = await waitForRunningService();
+  await assertMacosRuntimeOwnershipRecovered(poisonedRuntimeRoot);
   const replacementConnection = await connectToTlsListener();
   replacementConnection.destroy();
   if (replacementStatus.state.pid === firstStatus.state.pid) {

@@ -85,6 +85,31 @@ describe('LocalTlsDaemon', () => {
     expect(await access(paths.stateFile)).toBeUndefined();
   });
 
+  it('transfers runtime ownership before certificate startup can fail', async () => {
+    const paths = getStatePaths(namespace, process.platform, { HOME: temporaryDirectory });
+    const transferOwnership = vi.fn(async () => undefined);
+    daemon = new LocalTlsDaemon({
+      paths,
+      opensslPath: path.join(temporaryDirectory, 'missing-openssl'),
+      port: 0,
+      runAsUser: { uid: 501, gid: 20 },
+      transferOwnership,
+      dropPrivileges: vi.fn(async () => undefined),
+    });
+
+    await expect(daemon.start()).rejects.toThrow();
+
+    expect(transferOwnership).toHaveBeenCalledOnce();
+    expect(transferOwnership).toHaveBeenCalledWith(
+      { uid: 501, gid: 20 },
+      expect.arrayContaining([
+        paths.stateDirectory,
+        path.dirname(paths.runtimeDirectory),
+        paths.runtimeDirectory,
+      ]),
+    );
+  });
+
   it('acknowledges readiness only after TLS and control are active', async () => {
     const backendPort = await listen(backend);
     const paths = getStatePaths(namespace, process.platform, { HOME: temporaryDirectory });

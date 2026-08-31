@@ -78,17 +78,24 @@ export function getStatePaths(
   };
 }
 
-export async function ensureStatePaths(paths: StatePaths): Promise<void> {
-  const directories = [
-    paths.stateDirectory,
-    paths.runtimeDirectory,
-    paths.certificateDirectory,
-    paths.importedCertificateDirectory,
-  ];
+async function ensureDirectories(directories: string[]): Promise<void> {
   for (const directory of directories) {
     await mkdir(directory, { recursive: true, mode: 0o700 });
     if (process.platform !== 'win32') {
       await chmod(directory, 0o700);
     }
   }
+}
+
+export function ensurePersistentStatePaths(paths: StatePaths): Promise<void> {
+  return ensureDirectories([
+    paths.stateDirectory,
+    paths.certificateDirectory,
+    paths.importedCertificateDirectory,
+  ]);
+}
+
+export async function ensureStatePaths(paths: StatePaths): Promise<void> {
+  await ensurePersistentStatePaths(paths);
+  await ensureDirectories([paths.runtimeDirectory]);
 }

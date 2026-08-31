@@ -2,13 +2,14 @@ import { access, open, readFile, stat, unlink } from 'node:fs/promises';
 import { createConnection, type Socket } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import os from 'node:os';
+import path from 'node:path';
 import { CONTROL_PROTOCOL_VERSION, encodeControlMessage } from './control-protocol.js';
 import { LocalTlsDaemon } from './daemon.js';
 import type { ServiceAutoStartOptions } from './interfaces/service-autostart-options.js';
 import type { ServiceOptions } from './interfaces/service-options.js';
 import type { ServiceState } from './interfaces/service-state.js';
 import type { ServiceStatus } from './interfaces/service-status.js';
-import { ensureStatePaths } from './state-paths.js';
+import { ensurePersistentStatePaths, ensureStatePaths } from './state-paths.js';
 
 interface StartupLock {
   pid: number;
@@ -563,8 +564,40 @@ export class LocalTlsService {
   }
 
   async #withAuthorizationLock<T>(operation: () => Promise<T>, onWait?: () => void): Promise<T> {
-    await ensureStatePaths(this.#options.paths);
-    const lockPath = `${this.#options.paths.lockPath}.authorization`;
+    await ensurePersistentStatePaths(this.#options.paths);
+    let waitingReported = false;
+    function reportWait(): void {
+      if (!waitingReported) {
+        waitingReported = true;
+        onWait?.();
+      }
+    }
+    return this.#withLock(
+      path.join(this.#options.paths.stateDirectory, 'startup.authorization.lock'),
+      async () => {
+        try {
+          await ensureStatePaths(this.#options.paths);
+        } catch (error) {
+          if (!errorHasCode(error, new Set(['EACCES', 'EPERM']))) {
+            throw error;
+          }
+          return operation();
+        }
+        return this.#withLock(
+          `${this.#options.paths.lockPath}.authorization`,
+          operation,
+          reportWait,
+        );
+      },
+      reportWait,
+    );
+  }
+
+  async #withLock<T>(
+    lockPath: string,
+    operation: () => Promise<T>,
+    onWait?: () => void,
+  ): Promise<T> {
     let waitingReported = false;
     while (true) {
       const release = await this.#tryAcquireLock(lockPath);

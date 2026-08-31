@@ -28,7 +28,7 @@ import type {
   CertificateAuthorityRecord,
   CertificateRecord,
 } from './interfaces/certificate-record.js';
-import { ensureStatePaths } from './state-paths.js';
+import { ensurePersistentStatePaths } from './state-paths.js';
 
 const CA_VALIDITY_DAYS = 3650;
 const EXPIRATION_WARNING_MS = 30 * 24 * 60 * 60 * 1000;
@@ -138,7 +138,7 @@ export class CertificateManager {
   }
 
   async #ensureCertificateAuthority(): Promise<CertificateAuthorityRecord> {
-    await ensureStatePaths(this.#options.paths);
+    await ensurePersistentStatePaths(this.#options.paths);
     return this.#withAuthorityLock(async () => {
       const certificateExists = await stat(this.#options.paths.caCertificatePath)
         .then(() => true)
