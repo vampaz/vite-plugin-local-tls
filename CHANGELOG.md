@@ -1,5 +1,11 @@
 # @vampaz/vite-plugin-local-tls
 
+## 0.1.2
+
+### Patch Changes
+
+- 2b587a0: Recover automatically when an earlier macOS service leaves the temporary runtime directory owned by root during a dependency update.
+
 ## 0.1.1
 
 ### Patch Changes
