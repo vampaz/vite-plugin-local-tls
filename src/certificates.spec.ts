@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import {
   access,
   chmod,
+  mkdir,
   mkdtemp,
   readFile,
   rm,
@@ -43,6 +44,26 @@ describe('CertificateManager CA', () => {
     expect(Date.parse(record.validTo) - Date.now()).toBeLessThanOrEqual(3660 * 24 * 60 * 60 * 1000);
     if (process.platform !== 'win32') {
       expect(keyStats.mode & 0o777).toBe(0o600);
+    }
+  });
+
+  it('prepares certificate state when a previous service owns the runtime directory', async () => {
+    const runtimeRoot = path.join(temporaryDirectory, 'blocked-runtime');
+    await mkdir(runtimeRoot);
+    await chmod(runtimeRoot, 0o000);
+    paths = {
+      ...paths,
+      runtimeDirectory: path.join(runtimeRoot, 'default'),
+      socketPath: path.join(runtimeRoot, 'default', 'control.sock'),
+      lockPath: path.join(runtimeRoot, 'default', 'startup.lock'),
+    };
+
+    try {
+      await expect(
+        new CertificateManager({ paths, opensslPath: 'openssl' }).ensureCertificateAuthority(),
+      ).resolves.toBeDefined();
+    } finally {
+      await chmod(runtimeRoot, 0o700);
     }
   });
 

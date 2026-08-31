@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -252,6 +252,55 @@ describe('local TLS service auto-start', () => {
     expect(installService).toHaveBeenCalledOnce();
   });
 
+  it('reaches service authorization when a previous service owns the runtime directory', async () => {
+    const directory = path.join(
+      os.tmpdir(),
+      `vite-local-tls-autostart-owned-runtime-${process.pid}`,
+    );
+    const paths = createStatePaths(directory);
+    const runtimeRoot = path.join(directory, 'blocked-runtime');
+    await mkdir(runtimeRoot, { recursive: true });
+    await chmod(runtimeRoot, 0o000);
+    const service = new LocalTlsService({
+      namespace: 'test',
+      opensslPath: 'openssl',
+      paths: {
+        ...paths,
+        runtimeDirectory: path.join(runtimeRoot, 'default'),
+        socketPath: path.join(runtimeRoot, 'default', 'control.sock'),
+        lockPath: path.join(runtimeRoot, 'default', 'startup.lock'),
+      },
+    });
+    temporaryDirectories.add(directory);
+    vi.spyOn(service, 'ensureRunning').mockRejectedValue(codedError('EACCES'));
+    vi.spyOn(service, 'status').mockResolvedValue({
+      running: true,
+      activeRoutes: 0,
+      protocolVersion: 1,
+      compatible: true,
+      state,
+    });
+    const installService = vi.fn(async () => {
+      await expect(
+        access(path.join(paths.stateDirectory, 'startup.authorization.lock')),
+      ).resolves.toBeUndefined();
+    });
+
+    try {
+      await expect(
+        service.autoStart({
+          interactive: true,
+          isTrusted: async () => true,
+          trust: async () => undefined,
+          installService,
+        }),
+      ).resolves.toBe(state);
+    } finally {
+      await chmod(runtimeRoot, 0o700);
+    }
+    expect(installService).toHaveBeenCalledOnce();
+  });
+
   it('fails with the exact service command when elevation is unavailable non-interactively', async () => {
     const service = createService();
     vi.spyOn(service, 'ensureRunning').mockRejectedValue(codedError('EPERM'));
@@ -500,15 +549,27 @@ describe('local TLS service auto-start', () => {
       });
     }
     let finishInstall: (() => void) | undefined;
-    const installService = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finishInstall = function resolveInstall() {
-            installed = true;
-            resolve();
-          };
-        }),
-    );
+    const installService = vi.fn(async () => {
+      await Promise.all([
+        expect(
+          access(
+            path.join(
+              createStatePaths(temporaryDirectory).stateDirectory,
+              'startup.authorization.lock',
+            ),
+          ),
+        ).resolves.toBeUndefined(),
+        expect(
+          access(`${createStatePaths(temporaryDirectory).lockPath}.authorization`),
+        ).resolves.toBeUndefined(),
+      ]);
+      await new Promise<void>((resolve) => {
+        finishInstall = function resolveInstall() {
+          installed = true;
+          resolve();
+        };
+      });
+    });
     const onAuthorizationWait = vi.fn();
     const options = {
       interactive: true,

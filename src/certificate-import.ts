@@ -9,7 +9,7 @@ import type {
 } from './interfaces/certificate-import-options.js';
 import type { CertificateContextOptions } from './interfaces/certificate-context-options.js';
 import type { CertificateRecord } from './interfaces/certificate-record.js';
-import { ensureStatePaths } from './state-paths.js';
+import { ensurePersistentStatePaths } from './state-paths.js';
 
 function certificateKey(hostname: string): string {
   return createHash('sha256').update(hostname).digest('hex');
@@ -48,7 +48,7 @@ export class CertificateImportStore {
       options.chainPath ? readFile(options.chainPath) : Promise.resolve(Buffer.alloc(0)),
     ]);
     const certificate = this.#validateCertificate(hostname, certificatePem, privateKeyPem);
-    await ensureStatePaths(this.#options.paths);
+    await ensurePersistentStatePaths(this.#options.paths);
     const key = certificateKey(hostname);
     const finalDirectory = path.join(this.#options.paths.importedCertificateDirectory, key);
     const temporaryDirectory = await mkdtemp(

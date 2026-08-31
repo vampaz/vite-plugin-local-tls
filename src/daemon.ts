@@ -13,6 +13,7 @@ import { startProxyListeners } from './proxy-listeners.js';
 import { createSecureProxyServer, ProxyServer } from './proxy-server.js';
 import { RouteRegistry } from './route-registry.js';
 import { dropServicePrivileges, transferServiceOwnership } from './service-privileges.js';
+import { ensureStatePaths } from './state-paths.js';
 
 export const SERVICE_BOOTSTRAP_HOSTNAME = 'unconfigured.vite-local-tls.invalid';
 
@@ -46,6 +47,17 @@ export class LocalTlsDaemon {
   async start(): Promise<ServiceState> {
     if (this.#state) {
       return this.#state;
+    }
+    await ensureStatePaths(this.#options.paths);
+    if (this.#options.runAsUser) {
+      const transferOwnership = this.#options.transferOwnership ?? transferServiceOwnership;
+      await transferOwnership(this.#options.runAsUser, [
+        this.#options.paths.stateDirectory,
+        path.dirname(this.#options.paths.runtimeDirectory),
+        this.#options.paths.runtimeDirectory,
+        this.#options.paths.certificateDirectory,
+        this.#options.paths.importedCertificateDirectory,
+      ]);
     }
     const authority = await this.#certificateManager.ensureCertificateAuthority();
     const bootstrap = await this.#certificateManager.ensureLeafCertificate(

@@ -7,7 +7,7 @@ import { CertificateManager } from './certificates.js';
 import type { CertificateAuthorityRecord } from './interfaces/certificate-record.js';
 import type { DiscoveredStartupServiceInstallation } from './interfaces/service-installation-inventory.js';
 import type { StatePaths } from './interfaces/state-paths.js';
-import { ensureStatePaths } from './state-paths.js';
+import { ensurePersistentStatePaths } from './state-paths.js';
 
 const MIGRATION_LOCK_TIMEOUT_MS = 30_000;
 const MIGRATION_LOCK_STALE_MS = 30_000;
@@ -106,7 +106,7 @@ async function clearStaleLock(lockPath: string): Promise<void> {
 }
 
 async function withMigrationLock<T>(paths: StatePaths, operation: () => Promise<T>): Promise<T> {
-  await ensureStatePaths(paths);
+  await ensurePersistentStatePaths(paths);
   const lockPath = path.join(paths.stateDirectory, 'ca-migration.lock');
   const deadline = Date.now() + MIGRATION_LOCK_TIMEOUT_MS;
   while (true) {

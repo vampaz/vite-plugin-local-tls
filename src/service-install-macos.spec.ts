@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -264,6 +264,35 @@ describe('macOS startup service', () => {
       'com.vampaz.vite-local-tls.default',
     ]);
     expect(uninstallSequence[4]).toMatchObject({ clearRollbackAfterSuccess: true });
+  });
+
+  it('reaches macOS authorization when a previous service owns the runtime directory', async () => {
+    const paths = statePaths();
+    const runtimeRoot = path.dirname(paths.runtimeDirectory);
+    await mkdir(runtimeRoot, { recursive: true });
+    await chmod(runtimeRoot, 0o000);
+    const runner = vi.fn(async () => ({ stdout: '', stderr: '' }));
+    const options = {
+      platform: 'darwin' as const,
+      namespace: 'default',
+      paths,
+      nodePath: '/opt/homebrew/bin/node',
+      cliPath: cliFixturePath,
+      homeDirectory: temporaryDirectory,
+      uid: 501,
+      gid: 20,
+      username: 'developer',
+      definitionDirectory: path.join(temporaryDirectory, 'Library', 'LaunchDaemons'),
+      runtimeInstallDirectory: path.join(temporaryDirectory, 'system-runtime'),
+      runner,
+    };
+
+    try {
+      await expect(installStartupService(options)).resolves.toMatchObject({ installed: true });
+    } finally {
+      await chmod(runtimeRoot, 0o700);
+    }
+    expect(runner).toHaveBeenCalledWith('/usr/bin/osascript', expect.any(Array));
   });
 
   it('does not expose a protected project CLI path to the elevated installer', async () => {
