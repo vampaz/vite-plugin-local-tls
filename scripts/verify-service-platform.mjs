@@ -202,6 +202,20 @@ async function poisonMacosRuntimeOwnership() {
   return runtimeRoot;
 }
 
+async function stopMacosServiceForOwnershipRecovery(record) {
+  if (process.platform !== 'darwin') {
+    return;
+  }
+  await runRequiredCommand('sudo', ['--', 'launchctl', 'bootout', `system/${record.identifier}`]);
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    if (!parseStatus(await runCli(['proxy', 'status'])).running) {
+      return;
+    }
+    await delay(100);
+  }
+  throw new Error('The macOS service did not stop before runtime ownership was changed.');
+}
+
 async function assertMacosRuntimeOwnershipRecovered(runtimeRoot) {
   if (!runtimeRoot) {
     return;
@@ -312,16 +326,28 @@ try {
   if (firstStatus.state.namespace !== 'default') {
     throw new Error(`Service namespace mismatch: ${JSON.stringify(firstStatus)}`);
   }
-  const poisonedRuntimeRoot = await poisonMacosRuntimeOwnership();
   await runCli(['service', 'install'], true);
   const replacementStatus = await waitForRunningService();
-  await assertMacosRuntimeOwnershipRecovered(poisonedRuntimeRoot);
   const replacementConnection = await connectToTlsListener();
   replacementConnection.destroy();
   if (replacementStatus.state.pid === firstStatus.state.pid) {
     throw new Error(
       `${process.platform} service replacement reused the old process: ${JSON.stringify(replacementStatus)}`,
     );
+  }
+  if (process.platform === 'darwin') {
+    activeConnection.destroy();
+    activeConnection = null;
+    await stopMacosServiceForOwnershipRecovery(installedRecord);
+    const poisonedRuntimeRoot = await poisonMacosRuntimeOwnership();
+    await runCli(['service', 'install'], true);
+    const recoveredStatus = await waitForRunningService();
+    await assertMacosRuntimeOwnershipRecovered(poisonedRuntimeRoot);
+    if (recoveredStatus.state.pid === replacementStatus.state.pid) {
+      throw new Error(
+        `macOS ownership recovery reused the stopped process: ${JSON.stringify(recoveredStatus)}`,
+      );
+    }
   }
   console.log(
     `Verified port-443 startup service installation and live-connection replacement on ${process.platform}.`,
