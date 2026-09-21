@@ -14,6 +14,7 @@ import { getGitRepoInfo } from './checkout-resolution.js';
 import type { LocalTlsPluginOptions } from './interfaces/plugin-options.js';
 import type {
   PluginControlClient,
+  PluginLogger,
   PluginRuntimeDependencies,
 } from './interfaces/plugin-runtime.js';
 import type { ServiceInstallOptions } from './interfaces/service-install-options.js';
@@ -97,6 +98,9 @@ function createDefaultDependencies(): PluginRuntimeDependencies {
       } else {
         console.error(message, error);
       }
+    },
+    debug(message): void {
+      console.debug(message);
     },
   };
   return {
@@ -359,6 +363,7 @@ function formatTarget(host: string, port: number): string {
 function resolveUpstream(
   server: SupportedViteServer,
   preview: boolean,
+  logger: PluginLogger,
 ): {
   host: string;
   port: number;
@@ -371,7 +376,11 @@ function resolveUpstream(
       if (url.hostname && Number.isInteger(port) && port > 0) {
         return { host: loopbackHost(url.hostname), port };
       }
-    } catch {}
+    } catch (error) {
+      logger.debug?.(
+        `Ignored unusable local URL "${resolvedUrl}" (${String(error)}); using the server address.`,
+      );
+    }
   }
   const address = server.httpServer?.address();
   const configured = preview ? server.config.preview : server.config.server;
@@ -607,7 +616,7 @@ function createPlugin(
         return;
       }
       started = true;
-      const upstream = resolveUpstream(server, preview);
+      const upstream = resolveUpstream(server, preview, dependencies.logger);
       routeInputs = domains.map((hostname) => ({
         hostname,
         upstreamHost: upstream.host,

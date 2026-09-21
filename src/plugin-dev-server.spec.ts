@@ -98,6 +98,9 @@ function createRuntime(): RuntimeFixture {
       error(message, error): void {
         errors.push({ message, error });
       },
+      debug(message): void {
+        logs.push(message);
+      },
     },
     ensureInfrastructure: vi.fn(
       async ({ namespace, paths }: PluginInfrastructureRequest): Promise<ServiceState> => ({
@@ -162,6 +165,29 @@ describe('Vite dev-server registration', () => {
     ]);
     expect(runtime.logs).toContain('Local TLS upstream: http://127.0.0.1:4321');
     expect(runtime.logs).toContain('Local TLS URL: https://app.localhost');
+  });
+
+  it('falls back to the server address and logs when a resolved local URL is unusable', async () => {
+    const httpServer = createHttpServer(5173);
+    const server = createServer(httpServer, {
+      resolvedUrls: { local: ['not a url'], network: [] },
+    });
+    const plugin = createViteLocalTlsPlugin({ domain: 'app.localhost' }, runtime.dependencies);
+
+    configureServer(plugin, server);
+    httpServer.listening = true;
+    httpServer.emit('listening');
+    await flushPromises();
+    await flushPromises();
+
+    expect(runtime.client.register).toHaveBeenCalledWith([
+      {
+        hostname: 'app.localhost',
+        upstreamHost: '127.0.0.1',
+        upstreamPort: 5173,
+      },
+    ]);
+    expect(runtime.logs.join('\n')).toContain('Ignored unusable local URL "not a url"');
   });
 
   it('prefers Vite resolved local URLs and forwards every route option', async () => {

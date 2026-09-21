@@ -32,7 +32,9 @@ export function findExecutable(
       try {
         accessSync(candidate, FS_CONSTANTS.X_OK);
         return candidate;
-      } catch {}
+      } catch (error) {
+        void error;
+      }
     }
   }
   return null;
