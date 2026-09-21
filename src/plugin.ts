@@ -35,9 +35,21 @@ import { TrustStore } from './trust-store.js';
 type SupportedViteServer = ViteDevServer | PreviewServer;
 export const PLUGIN_HEARTBEAT_INTERVAL_MS = 10_000;
 
+function buildHostExposureMessage(defaultedHosts: string[]): string {
+  const optOut = defaultedHosts
+    .map((host) => `\`${host.split('.')[0]}: { host: 'localhost' }\``)
+    .join(' and ');
+  const subject = defaultedHosts.join(' and ');
+  return (
+    `The plaintext Vite ${defaultedHosts.length === 1 ? 'server is' : 'servers are'} reachable from devices on your local network because ${subject} ` +
+    `${defaultedHosts.length === 1 ? 'defaults' : 'default'} to \`true\`. Set ${optOut} to restrict access to this machine.`
+  );
+}
+
 function createConfig(
   userConfig: UserConfig,
   options: LocalTlsPluginOptions,
+  onDefaultedHost: (defaultedHosts: string[]) => void,
 ): Pick<UserConfig, 'server' | 'preview'> {
   const defaultHmrDomain = resolveLocalTlsDomains(options)?.[0];
   const hmr =
@@ -48,6 +60,13 @@ function createConfig(
           clientPort: 443,
         }
       : userConfig.server?.hmr;
+  const defaultedHosts = [
+    ...(userConfig.server?.host === undefined ? ['server.host'] : []),
+    ...(userConfig.preview?.host === undefined ? ['preview.host'] : []),
+  ];
+  if (defaultedHosts.length > 0) {
+    onDefaultedHost(defaultedHosts);
+  }
   return {
     server: {
       host: userConfig.server?.host === undefined ? true : userConfig.server.host,
@@ -677,10 +696,17 @@ function createPlugin(
     }
   }
 
+  let warnedAboutNetworkHost = false;
   return {
     name: '@vampaz/vite-plugin-local-tls',
     config(userConfig): Pick<UserConfig, 'server' | 'preview'> {
-      return createConfig(userConfig, options);
+      return createConfig(userConfig, options, (defaultedHosts) => {
+        if (warnedAboutNetworkHost) {
+          return;
+        }
+        warnedAboutNetworkHost = true;
+        dependencies.logger.warn(buildHostExposureMessage(defaultedHosts));
+      });
     },
     configureServer(server): void {
       setupServer(server, false);

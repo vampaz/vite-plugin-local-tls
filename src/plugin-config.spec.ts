@@ -1,5 +1,5 @@
 import type { Plugin, UserConfig } from 'vite';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { viteLocalTlsPlugin } from './plugin.js';
 
 interface ViteRuntime {
@@ -97,6 +97,67 @@ describe('Vite local TLS plugin config', () => {
       server: { host: true, allowedHosts: true },
       preview: { host: true, allowedHosts: true },
     });
+  });
+
+  it('warns once when defaulting the plaintext hosts to all interfaces', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const plugin = viteLocalTlsPlugin({ domain: 'app.localhost' }) as Plugin;
+      const configHook = plugin.config as (
+        config: UserConfig,
+        environment: { command: 'serve'; mode: string },
+      ) => unknown;
+      const environment = { command: 'serve' as const, mode: 'development' };
+      configHook({}, environment);
+      configHook({}, environment);
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      const message = String(warn.mock.calls[0]?.[0]);
+      expect(message).toContain('local network');
+      expect(message).toContain("server: { host: 'localhost' }");
+      expect(message).toContain("preview: { host: 'localhost' }");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('stays silent when explicit hosts restrict access', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const plugin = viteLocalTlsPlugin({ domain: 'app.localhost' }) as Plugin;
+      const configHook = plugin.config as (
+        config: UserConfig,
+        environment: { command: 'serve'; mode: string },
+      ) => unknown;
+      configHook(
+        { server: { host: '127.0.0.1' }, preview: { host: '127.0.0.1' } },
+        { command: 'serve', mode: 'development' },
+      );
+
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('warns only about the host that was defaulted', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const plugin = viteLocalTlsPlugin({ domain: 'app.localhost' }) as Plugin;
+      const configHook = plugin.config as (
+        config: UserConfig,
+        environment: { command: 'serve'; mode: string },
+      ) => unknown;
+      configHook({ server: { host: 'localhost' } }, { command: 'serve', mode: 'development' });
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      const message = String(warn.mock.calls[0]?.[0]);
+      expect(message).toContain('preview.host');
+      expect(message).not.toContain('server.host');
+      expect(message).toContain("preview: { host: 'localhost' }");
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it.each([
