@@ -1,12 +1,26 @@
 import { createServer, get, type Server } from 'node:http';
 import { once } from 'node:events';
+import { execFile } from 'node:child_process';
 import { connect, createConnection, createServer as createNetworkServer } from 'node:net';
 import os from 'node:os';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProxyListenerSet } from './interfaces/proxy-listeners.js';
 import { startProxyListeners } from './proxy-listeners.js';
 import { ProxyServer } from './proxy-server.js';
 import { RouteRegistry } from './route-registry.js';
+
+vi.mock('node:child_process', () => ({
+  execFile: vi.fn(
+    (
+      _command: string,
+      _arguments: readonly string[],
+      callback: (error: Error | null, stdout: string, stderr: string) => void,
+    ) => {
+      callback(new Error('lsof unavailable'), '', '');
+      return null as never;
+    },
+  ),
+}));
 
 const servers: Server[] = [];
 let listeners: ProxyListenerSet | null;
@@ -164,5 +178,66 @@ describe('proxy listeners', () => {
 
     const replacementIpv4 = createServer();
     await expect(listen(replacementIpv4, '127.0.0.1', occupiedPort)).resolves.toBe(occupiedPort);
+  });
+
+  it('names the conflicting Windows listener from Get-NetTCPConnection', async () => {
+    const unrelated = createServer((_request, response) => response.end('unrelated'));
+    const occupiedPort = await listen(unrelated, '127.0.0.1');
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    vi.mocked(execFile).mockImplementationOnce(((
+      command: string,
+      arguments_: string[],
+      callback: (error: Error | null, stdout: string, stderr: string) => void,
+    ) => {
+      expect(command).toBe('powershell');
+      expect(arguments_.join(' ')).toContain(
+        `Get-NetTCPConnection -LocalPort ${occupiedPort} -State Listen`,
+      );
+      callback(
+        null,
+        'OwningProcess ProcessName\r\n-------------- -----------\r\n      4711 node\r\n',
+        '',
+      );
+      return null as never;
+    }) as never);
+    try {
+      const failure = await startProxyListeners({
+        port: occupiedPort,
+        createServer: () => createServer(),
+      }).catch((error: unknown) => error);
+
+      expect(failure).toMatchObject({ code: 'EADDRINUSE', address: '127.0.0.1' });
+      expect((failure as Error).message).toContain('Existing listener:');
+      expect((failure as Error).message).toContain('4711 node');
+    } finally {
+      platform.mockRestore();
+      vi.mocked(execFile).mockClear();
+    }
+  });
+
+  it('reports a bare conflict when the Windows owner lookup fails', async () => {
+    const unrelated = createServer((_request, response) => response.end('unrelated'));
+    const occupiedPort = await listen(unrelated, '127.0.0.1');
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    vi.mocked(execFile).mockImplementationOnce(((
+      _command: string,
+      _arguments: string[],
+      callback: (error: Error | null, stdout: string, stderr: string) => void,
+    ) => {
+      callback(new Error('Get-NetTCPConnection is not available.'), '', '');
+      return null as never;
+    }) as never);
+    try {
+      const failure = await startProxyListeners({
+        port: occupiedPort,
+        createServer: () => createServer(),
+      }).catch((error: unknown) => error);
+
+      expect(failure).toMatchObject({ code: 'EADDRINUSE', address: '127.0.0.1' });
+      expect((failure as Error).message).not.toContain('Existing listener:');
+    } finally {
+      platform.mockRestore();
+      vi.mocked(execFile).mockClear();
+    }
   });
 });
