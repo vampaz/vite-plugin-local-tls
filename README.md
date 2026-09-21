@@ -207,9 +207,11 @@ See [Security](./SECURITY.md) for the complete trust, network, service, and cont
 - If `doctor` reports legacy startup services with active routes, stop those Vite processes and start any updated project again. Idle owned contenders converge automatically.
 - On Linux, run Vite or lifecycle commands in an interactive terminal when administrator authorization is required. macOS uses a native administrator dialog even when the dev server starts in the background.
 - If an idle service cannot update automatically because authorization is unavailable, stop active Vite routes and run `npm exec -- vite-local-tls service install` from an interactive terminal.
-- If port 443 is occupied, identify and stop or reconfigure that process yourself; the plugin will not terminate it.
+- On macOS, the operating-system prompt to trust or untrust the certificate authority must be approved within 120 seconds; otherwise the command fails with `The operating system authorization prompt timed out after 120 seconds` and can be rerun.
+- If port 443 is occupied, the conflict message names the listening process when the operating system reports it, including on Windows through `Get-NetTCPConnection` when that lookup succeeds. Identify and stop or reconfigure that process yourself; the plugin will not terminate it.
 - If the wrong server owns a hostname, choose a unique `domain` or `instanceLabel`, or restart the intended server so it makes the latest claim.
 - If a custom non-local hostname fails with `internalTls: false`, import a matching certificate before starting Vite.
+- HMR connects over `wss://` on port 443 through the proxy, so live reload fails while the proxy daemon is down. The plugin detects the disconnect and recovers automatically: it restores the proxy, re-registers the routes with retries, and the Vite client reconnects without restarting Vite.
 
 ## Uninstall completely
 
