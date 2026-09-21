@@ -11,7 +11,9 @@ import type {
 } from './interfaces/trust-store-options.js';
 
 const COMMAND_TIMEOUT_MS = 30_000;
-const INTERACTIVE_AUTHORIZATION_TIMEOUT_MS = 0;
+// Interactive trust changes show a system authorization dialog the user completes by
+// hand; wait up to two minutes instead of hanging forever when nobody answers.
+const INTERACTIVE_AUTHORIZATION_TIMEOUT_MS = 120_000;
 
 function runCommand(
   command: string,
@@ -55,21 +57,16 @@ export class TrustStore {
       throw new Error('No supported operating-system trust tool is available.');
     }
     if (requirements.platform === 'darwin') {
-      await this.#run(
-        requirements.trustToolPath,
-        [
-          'add-trusted-cert',
-          '-r',
-          'trustRoot',
-          '-p',
-          'ssl',
-          '-k',
-          this.#macosKeychain(),
-          this.#options.authority.certificatePath,
-        ],
-        undefined,
-        INTERACTIVE_AUTHORIZATION_TIMEOUT_MS,
-      );
+      await this.#runAuthorization(requirements.trustToolPath, [
+        'add-trusted-cert',
+        '-r',
+        'trustRoot',
+        '-p',
+        'ssl',
+        '-k',
+        this.#macosKeychain(),
+        this.#options.authority.certificatePath,
+      ]);
     } else if (requirements.trustTool === 'certutil') {
       const certificatePath = requirements.isWsl
         ? await this.#windowsPath(this.#options.authority.certificatePath)
@@ -161,17 +158,12 @@ export class TrustStore {
       throw new Error('No supported operating-system trust tool is available.');
     }
     if (requirements.platform === 'darwin') {
-      await this.#run(
-        requirements.trustToolPath,
-        [
-          'delete-certificate',
-          '-Z',
-          authority.fingerprintSha1.toUpperCase(),
-          this.#macosKeychain(),
-        ],
-        undefined,
-        INTERACTIVE_AUTHORIZATION_TIMEOUT_MS,
-      );
+      await this.#runAuthorization(requirements.trustToolPath, [
+        'delete-certificate',
+        '-Z',
+        authority.fingerprintSha1.toUpperCase(),
+        this.#macosKeychain(),
+      ]);
     } else if (requirements.trustTool === 'certutil') {
       await this.#run(requirements.trustToolPath, [
         '-user',
@@ -273,6 +265,20 @@ export class TrustStore {
     timeoutMs = COMMAND_TIMEOUT_MS,
   ): Promise<CommandResult> {
     return this.#runner(command, arguments_, timeoutMs, options);
+  }
+
+  async #runAuthorization(command: string, arguments_: string[]): Promise<CommandResult> {
+    try {
+      return await this.#run(command, arguments_, undefined, INTERACTIVE_AUTHORIZATION_TIMEOUT_MS);
+    } catch (error) {
+      if ((error as { cause?: { killed?: boolean } }).cause?.killed) {
+        throw new Error(
+          `The operating system authorization prompt timed out after ${INTERACTIVE_AUTHORIZATION_TIMEOUT_MS / 1000} seconds.`,
+          { cause: error },
+        );
+      }
+      throw error;
+    }
   }
 
   #runElevated(command: string, arguments_: string[]): Promise<CommandResult> {

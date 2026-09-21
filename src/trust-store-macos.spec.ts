@@ -84,7 +84,7 @@ describe('macOS trust store', () => {
         keychainPath,
         certificatePath,
       ],
-      timeoutMs: 0,
+      timeoutMs: 120_000,
     });
   });
 
@@ -109,7 +109,7 @@ describe('macOS trust store', () => {
         createAuthority(certificatePath).fingerprintSha1.toUpperCase(),
         keychainPath,
       ],
-      timeoutMs: 0,
+      timeoutMs: 120_000,
     });
   });
 
@@ -122,5 +122,23 @@ describe('macOS trust store', () => {
     });
 
     await expect(createStore(runner).install()).rejects.toThrow(/SSL trust/i);
+  });
+
+  it('surfaces a clear error when nobody answers the authorization prompt', async () => {
+    const { calls, runner } = createRecordingRunner(() => {
+      const killed = Object.assign(new Error('Command failed: SIGTERM'), {
+        killed: true,
+        signal: 'SIGTERM',
+      });
+      throw new Error('Command failed: /usr/bin/security add-trusted-cert ...', { cause: killed });
+    });
+
+    await expect(createStore(runner).install()).rejects.toThrow(
+      'authorization prompt timed out after 120 seconds',
+    );
+    expect(calls[0]).toMatchObject({
+      command: '/usr/bin/security',
+      timeoutMs: 120_000,
+    });
   });
 });
