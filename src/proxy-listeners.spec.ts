@@ -1,6 +1,7 @@
 import { createServer, get, type Server } from 'node:http';
 import { once } from 'node:events';
-import { createConnection, createServer as createNetworkServer } from 'node:net';
+import { connect, createConnection, createServer as createNetworkServer } from 'node:net';
+import os from 'node:os';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ProxyListenerSet } from './interfaces/proxy-listeners.js';
 import { startProxyListeners } from './proxy-listeners.js';
@@ -34,6 +35,20 @@ function fetch(host: string, port: number, routeHost: string): Promise<string> {
       response.on('end', () => resolve(Buffer.concat(chunks).toString()));
     });
     request.once('error', reject);
+  });
+}
+
+function connectionFailure(host: string, port: number): Promise<string> {
+  return new Promise((resolve) => {
+    const socket = connect({ host, port });
+    socket.once('error', (error) => {
+      socket.destroy();
+      resolve(error.message);
+    });
+    socket.once('connect', () => {
+      socket.destroy();
+      resolve('connected');
+    });
   });
 }
 
@@ -86,6 +101,30 @@ describe('proxy listeners', () => {
     expect(listeners.ipv6.address()).toMatchObject({ address: '::1' });
     await expect(fetch('::1', listeners.port, 'ipv4.localhost')).resolves.toBe('ipv4');
     await expect(fetch('127.0.0.1', listeners.port, 'ipv6.localhost')).resolves.toBe('ipv6');
+  });
+
+  it('exposes only the loopback listeners SECURITY.md promises', async () => {
+    listeners = await startProxyListeners({ port: 0, createServer: () => createServer() });
+
+    expect(listeners.ipv4.address()).toMatchObject({
+      address: '127.0.0.1',
+      family: 'IPv4',
+      port: listeners.port,
+    });
+    expect(listeners.ipv6.address()).toMatchObject({
+      address: '::1',
+      family: 'IPv6',
+      port: listeners.port,
+    });
+
+    const nonLoopbackIpv4 = Object.values(os.networkInterfaces())
+      .flat()
+      .find((entry) => entry?.internal === false && entry.family === 'IPv4');
+    if (nonLoopbackIpv4) {
+      await expect(connectionFailure(nonLoopbackIpv4.address, listeners.port)).resolves.toContain(
+        'ECONNREFUSED',
+      );
+    }
   });
 
   it('reports an existing listener and leaves it running', async () => {
