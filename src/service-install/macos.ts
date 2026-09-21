@@ -39,7 +39,7 @@ export const MACOS_LAUNCHD_REMOVAL_WAIT_SOURCE = [
   'process.exit(1);',
 ].join('\n');
 
-export const MACOS_SERVICE_READINESS_WAIT_SOURCE = [
+const MACOS_SERVICE_READINESS_WAIT_SOURCE = [
   'import { spawnSync } from "node:child_process";',
   'const [nodePath, cliPath, namespace, controlSocket] = process.argv.slice(1);',
   'const deadline = Date.now() + 30_000;',

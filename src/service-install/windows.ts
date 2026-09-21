@@ -22,11 +22,11 @@ import {
   xmlWithoutComments,
 } from './shared.js';
 
-export function windowsConfigurationPath(runtimeDirectory: string): string {
+function windowsConfigurationPath(runtimeDirectory: string): string {
   return path.join(runtimeDirectory, 's.json');
 }
 
-export function windowsTaskPath(filePath: string): string {
+function windowsTaskPath(filePath: string): string {
   const localAppData = process.env.LOCALAPPDATA;
   if (!localAppData) {
     return filePath;
@@ -38,18 +38,14 @@ export function windowsTaskPath(filePath: string): string {
   return path.win32.join('%LOCALAPPDATA%', relativePath);
 }
 
-export function windowsTaskCommand(
-  nodePath: string,
-  cliPath: string,
-  configurationPath: string,
-): string {
+function windowsTaskCommand(nodePath: string, cliPath: string, configurationPath: string): string {
   return `${windowsQuote(windowsTaskPath(nodePath))} ${windowsTaskArguments(
     cliPath,
     configurationPath,
   )}`;
 }
 
-export function windowsTaskArgumentsForPaths(cliPath: string, configurationPath: string): string {
+function windowsTaskArgumentsForPaths(cliPath: string, configurationPath: string): string {
   return [
     windowsQuote(cliPath),
     'proxy',
@@ -60,18 +56,15 @@ export function windowsTaskArgumentsForPaths(cliPath: string, configurationPath:
   ].join(' ');
 }
 
-export function windowsTaskArguments(cliPath: string, configurationPath: string): string {
+function windowsTaskArguments(cliPath: string, configurationPath: string): string {
   return windowsTaskArgumentsForPaths(windowsTaskPath(cliPath), windowsTaskPath(configurationPath));
 }
 
-export function windowsTaskPathCandidates(filePath: string): string[] {
+function windowsTaskPathCandidates(filePath: string): string[] {
   return [...new Set([windowsTaskPath(filePath), filePath])];
 }
 
-export function windowsTaskArgumentCandidates(
-  cliPath: string,
-  configurationPath: string,
-): string[] {
+function windowsTaskArgumentCandidates(cliPath: string, configurationPath: string): string[] {
   return windowsTaskPathCandidates(cliPath).flatMap((taskCliPath) =>
     windowsTaskPathCandidates(configurationPath).map((taskConfigurationPath) =>
       windowsTaskArgumentsForPaths(taskCliPath, taskConfigurationPath),
