@@ -111,6 +111,15 @@ The plugin supplies Vite defaults only when you have not set them yourself:
 - HMR defaults to WSS on the public hostname and port 443.
 - Explicit Vite server, preview, and HMR settings always win.
 
+**LAN exposure:** because `server.host` and `preview.host` default to `true`, the plaintext Vite dev and preview servers are reachable from devices on your local network; TLS terminates at the proxy, not at Vite. Opt out with:
+
+```js
+export default defineConfig({
+  server: { host: 'localhost' },
+  preview: { host: 'localhost' },
+});
+```
+
 Compatibility options from `vite-plugin-caddy-multiple-tls` remain accepted: `serverName` is a deprecated alias for the now-canonicalized `serviceNamespace`, while `caddyApiUrl` and `caddyAdminOrigin` are deprecated no-ops. The exported `resolveCaddyTlsDomains`, `resolveCaddyTlsUrl`, and `ViteCaddyTlsPluginOptions` names are also deprecated aliases. See the dedicated [migration guide](./MIGRATION.md) for details.
 
 ## Certificate policy

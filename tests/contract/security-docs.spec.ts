@@ -27,6 +27,9 @@ describe('security documentation contract', () => {
       'vite-local-tls untrust',
       'canonical startup service',
       'SuccessfulExit',
+      'LAN exposure',
+      'local network',
+      "server: { host: 'localhost' }",
     ]) {
       expect(documentation).toContain(boundary);
     }
