@@ -21,6 +21,7 @@ import type {
   ServiceInstallResult,
   StartupServiceUpdateStatus,
 } from './interfaces/service-install-options.js';
+import { DEFAULT_PUBLIC_PORT } from './constants.js';
 import type { ServiceRuntimeConfiguration } from './interfaces/service-runtime-configuration.js';
 import { executeCommand } from './command-runner.js';
 import { CONTROL_PROTOCOL_VERSION } from './control-protocol.js';
@@ -582,7 +583,7 @@ function installedService(options: ServiceInstallOptions): LocalTlsService {
     paths: options.paths,
     opensslPath: 'openssl',
     namespace: options.namespace,
-    port: 443,
+    port: DEFAULT_PUBLIC_PORT,
   });
 }
 

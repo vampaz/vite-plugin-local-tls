@@ -20,6 +20,7 @@ import {
   type SecureContext,
   type TLSSocket,
 } from 'node:tls';
+import { DEFAULT_PUBLIC_PORT } from './constants.js';
 import type { CertificateContextOptions } from './interfaces/certificate-context-options.js';
 import type { ProxyListenerServer } from './interfaces/proxy-listeners.js';
 import type { ProxyOptions } from './interfaces/proxy-options.js';
@@ -269,7 +270,7 @@ export class ProxyServer {
     this.#options = {
       ...options,
       publicProtocol: options.publicProtocol ?? 'https',
-      publicPort: options.publicPort ?? 443,
+      publicPort: options.publicPort ?? DEFAULT_PUBLIC_PORT,
       proxyMarker: options.proxyMarker ?? 'x-vite-local-tls-proxy',
     };
   }

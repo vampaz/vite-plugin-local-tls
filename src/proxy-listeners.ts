@@ -5,6 +5,7 @@ import type {
   ProxyListenerServer,
   ProxyListenerSet,
 } from './interfaces/proxy-listeners.js';
+import { DEFAULT_PUBLIC_PORT } from './constants.js';
 
 export class ProxyListenerError extends Error {
   readonly code?: string;
@@ -99,7 +100,7 @@ async function buildListenerError(
 export async function startProxyListeners(
   options: ProxyListenerOptions,
 ): Promise<ProxyListenerSet> {
-  const requestedPort = options.port ?? 443;
+  const requestedPort = options.port ?? DEFAULT_PUBLIC_PORT;
   const ipv4 = options.createServer();
   const ipv4Connections = trackConnections(ipv4);
   let port: number;

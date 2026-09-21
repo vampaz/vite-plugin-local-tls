@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import type { AddressInfo } from 'node:net';
 import type { Plugin, PluginOption, PreviewServer, UserConfig, ViteDevServer } from 'vite';
 import { CertificateManager } from './certificates.js';
+import { DEFAULT_PUBLIC_PORT } from './constants.js';
 import { ControlClient, type OwnedRouteInput } from './control-client.js';
 import {
   normalizeBaseDomain,
@@ -57,7 +58,7 @@ function createConfig(
       ? {
           protocol: 'wss' as const,
           host: defaultHmrDomain,
-          clientPort: 443,
+          clientPort: DEFAULT_PUBLIC_PORT,
         }
       : userConfig.server?.hmr;
   const defaultedHosts = [
@@ -129,7 +130,7 @@ function createDefaultDependencies(): PluginRuntimeDependencies {
         });
       }
       function createService(paths: StatePaths, namespace: string): LocalTlsService {
-        return new LocalTlsService({ paths, opensslPath, namespace, port: 443 });
+        return new LocalTlsService({ paths, opensslPath, namespace, port: DEFAULT_PUBLIC_PORT });
       }
       async function ensureService(
         paths: StatePaths,
