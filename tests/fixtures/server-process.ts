@@ -1,10 +1,25 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  access,
+  chmod,
+  copyFile,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getStatePaths } from '../../src/state-paths.js';
+import { CertificateManager } from '../../src/certificates.js';
+import type { CertificateAuthorityRecord } from '../../src/interfaces/certificate-record.js';
+import type { StatePaths } from '../../src/interfaces/state-paths.js';
+import { ensurePersistentStatePaths, getStatePaths } from '../../src/state-paths.js';
+import { findExecutable, inspectSystemRequirements } from '../../src/system-requirements.js';
+import { TrustStore } from '../../src/trust-store.js';
 
 export interface E2eContext {
   root: string;
@@ -14,6 +29,130 @@ export interface E2eContext {
   proxyPort: number;
   paths: ReturnType<typeof getStatePaths>;
   servers: Set<RunningServer>;
+}
+
+export interface E2eAuthority {
+  paths: StatePaths;
+  record: CertificateAuthorityRecord;
+}
+
+function e2eAuthorityCachePaths(): StatePaths {
+  return getStatePaths('e2e-authority', process.platform, {
+    ...process.env,
+    HOME: path.join(os.homedir(), '.cache', 'vite-local-tls-e2e'),
+  });
+}
+
+async function hasStoredAuthority(paths: StatePaths): Promise<boolean> {
+  try {
+    await Promise.all([readFile(paths.caCertificatePath), readFile(paths.caKeyPath)]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function verifyE2eAuthorityTrust(
+  authority: CertificateAuthorityRecord,
+): Promise<boolean> {
+  const requirements = inspectSystemRequirements();
+  return (await new TrustStore({ requirements, authority }).verify()).trusted;
+}
+
+async function importIntoBrowserNssStore(certificatePath: string): Promise<void> {
+  if (process.platform !== 'linux') {
+    return;
+  }
+  const certutil = findExecutable('certutil', process.env);
+  if (!certutil) {
+    return;
+  }
+  try {
+    const databaseDirectory = path.join(os.homedir(), '.pki', 'nssdb');
+    await mkdir(databaseDirectory, { recursive: true });
+    const initialized = await access(path.join(databaseDirectory, 'cert9.db')).then(
+      () => true,
+      () => false,
+    );
+    if (!initialized) {
+      await run(
+        certutil,
+        ['-N', '-d', `sql:${databaseDirectory}`, '--empty-password'],
+        repositoryRoot,
+      );
+    }
+    await run(
+      certutil,
+      [
+        '-A',
+        '-d',
+        `sql:${databaseDirectory}`,
+        '-n',
+        'vite-local-tls-e2e',
+        '-t',
+        'C,,',
+        '-i',
+        certificatePath,
+      ],
+      repositoryRoot,
+    );
+  } catch {
+    // Best effort: Chromium may still trust the operating-system store on Linux.
+  }
+}
+
+export async function resolveE2eAuthority(options: {
+  interactive: boolean;
+}): Promise<E2eAuthority> {
+  const requirements = inspectSystemRequirements();
+  if (!requirements.opensslPath || !requirements.trustToolPath || !requirements.trustTool) {
+    throw new Error(
+      `The e2e suite requires openssl and a system trust tool: ${requirements.missing.join('; ')}`,
+    );
+  }
+  const realPaths = getStatePaths('default', process.platform, process.env);
+  if (await hasStoredAuthority(realPaths)) {
+    try {
+      const record = await new CertificateManager({
+        paths: realPaths,
+        opensslPath: requirements.opensslPath,
+      }).ensureCertificateAuthority();
+      if ((await new TrustStore({ requirements, authority: record }).verify()).trusted) {
+        await importIntoBrowserNssStore(record.certificatePath);
+        return { paths: realPaths, record };
+      }
+    } catch {
+      // A broken or untrusted local authority falls back to the shared e2e authority.
+    }
+  }
+  const paths = e2eAuthorityCachePaths();
+  const record = await new CertificateManager({
+    paths,
+    opensslPath: requirements.opensslPath,
+  }).ensureCertificateAuthority();
+  const trustStore = new TrustStore({ requirements, authority: record });
+  if (!(await trustStore.verify()).trusted) {
+    if (!options.interactive && process.env.CI !== 'true') {
+      throw new Error(
+        'The shared e2e certificate authority is not trusted on this machine. Run `npm run test:e2e:setup` once to trust it (macOS shows an authorization prompt).',
+      );
+    }
+    await trustStore.install();
+  }
+  await importIntoBrowserNssStore(record.certificatePath);
+  return { paths, record };
+}
+
+async function seedE2eAuthority(paths: StatePaths, authority: E2eAuthority): Promise<void> {
+  if (authority.record.certificatePath === paths.caCertificatePath) {
+    return;
+  }
+  await ensurePersistentStatePaths(paths);
+  await copyFile(authority.record.certificatePath, paths.caCertificatePath);
+  await copyFile(authority.record.keyPath, paths.caKeyPath);
+  if (process.platform !== 'win32') {
+    await chmod(paths.caKeyPath, 0o600);
+  }
 }
 
 export interface StartServerOptions {
@@ -137,13 +276,16 @@ export async function prepareE2eContext(): Promise<E2eContext> {
   const proxyPort = process.env.VITE_TLS_DEFAULT_PATH === 'true' ? 443 : await findAvailablePort();
   const fixtureDirectory = await installPackedPlayground(root);
   const environment = { ...process.env, HOME: stateHome };
+  const paths = getStatePaths(namespace, process.platform, environment);
+  const authority = await resolveE2eAuthority({ interactive: false });
+  await seedE2eAuthority(paths, authority);
   return {
     root,
     fixtureDirectory,
     stateHome,
     namespace,
     proxyPort,
-    paths: getStatePaths(namespace, process.platform, environment),
+    paths,
     servers: new Set(),
   };
 }

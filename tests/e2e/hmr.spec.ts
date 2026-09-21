@@ -20,8 +20,8 @@ test('delivers WSS HMR only to the edited checkout', async ({ browser, e2e }) =>
       marker: 'hmr-clone',
     }),
   ]);
-  const primaryContext = await browser.newContext({ ignoreHTTPSErrors: true });
-  const cloneContext = await browser.newContext({ ignoreHTTPSErrors: true });
+  const primaryContext = await browser.newContext();
+  const cloneContext = await browser.newContext();
   try {
     const primaryPage = await primaryContext.newPage();
     const clonePage = await cloneContext.newPage();
