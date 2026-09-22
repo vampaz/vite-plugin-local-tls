@@ -318,13 +318,13 @@ describe('local TLS service auto-start', () => {
     });
   });
 
-  it('routes background macOS startup through native graphical authorization', async () => {
+  it('routes interactive macOS startup through native graphical authorization', async () => {
     const streams = [process.stdin, process.stdout, process.stderr];
     const descriptors = streams.map((stream) => Object.getOwnPropertyDescriptor(stream, 'isTTY'));
     const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
     vi.stubEnv('CI', '');
     for (const stream of streams) {
-      Object.defineProperty(stream, 'isTTY', { configurable: true, value: false });
+      Object.defineProperty(stream, 'isTTY', { configurable: true, value: true });
     }
     try {
       const directory = path.join(
@@ -379,6 +379,49 @@ describe('local TLS service auto-start', () => {
       expect(runner.mock.calls[0]?.[1]).toContain(
         'do shell script (commandPath & " --input-type=module --eval " & source & " " & requests) with administrator privileges with prompt "Vite Local TLS needs permission to install or update its local HTTPS service."',
       );
+    } finally {
+      platform.mockRestore();
+      vi.unstubAllEnvs();
+      streams.forEach((stream, index) => {
+        const descriptor = descriptors[index];
+        if (descriptor) {
+          Object.defineProperty(stream, 'isTTY', descriptor);
+        } else {
+          Reflect.deleteProperty(stream, 'isTTY');
+        }
+      });
+    }
+  });
+
+  it('refuses macOS trust and service prompts when no terminal is attached', async () => {
+    const streams = [process.stdin, process.stdout, process.stderr];
+    const descriptors = streams.map((stream) => Object.getOwnPropertyDescriptor(stream, 'isTTY'));
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    vi.stubEnv('CI', '');
+    for (const stream of streams) {
+      Object.defineProperty(stream, 'isTTY', { configurable: true, value: false });
+    }
+    try {
+      const service = createService();
+      vi.spyOn(service, 'ensureRunning').mockRejectedValue(codedError('EACCES'));
+      const installService = vi.fn(async () => undefined);
+
+      await expect(
+        service.autoStart({
+          isTrusted: async () => false,
+          trust: async () => undefined,
+          installService,
+        }),
+      ).rejects.toMatchObject({ code: 'TRUST_REQUIRED' });
+
+      await expect(
+        service.autoStart({
+          isTrusted: async () => true,
+          trust: async () => undefined,
+          installService,
+        }),
+      ).rejects.toMatchObject({ code: 'SERVICE_INSTALL_REQUIRED' });
+      expect(installService).not.toHaveBeenCalled();
     } finally {
       platform.mockRestore();
       vi.unstubAllEnvs();

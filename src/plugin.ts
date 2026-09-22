@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import type { AddressInfo } from 'node:net';
 import type { Plugin, PluginOption, PreviewServer, UserConfig, ViteDevServer } from 'vite';
 import { CertificateManager } from './certificates.js';
+import { DEFAULT_PUBLIC_PORT } from './constants.js';
 import { ControlClient, type OwnedRouteInput } from './control-client.js';
 import {
   normalizeBaseDomain,
@@ -13,6 +14,7 @@ import { getGitRepoInfo } from './checkout-resolution.js';
 import type { LocalTlsPluginOptions } from './interfaces/plugin-options.js';
 import type {
   PluginControlClient,
+  PluginLogger,
   PluginRuntimeDependencies,
 } from './interfaces/plugin-runtime.js';
 import type { ServiceInstallOptions } from './interfaces/service-install-options.js';
@@ -35,9 +37,21 @@ import { TrustStore } from './trust-store.js';
 type SupportedViteServer = ViteDevServer | PreviewServer;
 export const PLUGIN_HEARTBEAT_INTERVAL_MS = 10_000;
 
+function buildHostExposureMessage(defaultedHosts: string[]): string {
+  const optOut = defaultedHosts
+    .map((host) => `\`${host.split('.')[0]}: { host: 'localhost' }\``)
+    .join(' and ');
+  const subject = defaultedHosts.join(' and ');
+  return (
+    `The plaintext Vite ${defaultedHosts.length === 1 ? 'server is' : 'servers are'} reachable from devices on your local network because ${subject} ` +
+    `${defaultedHosts.length === 1 ? 'defaults' : 'default'} to \`true\`. Set ${optOut} to restrict access to this machine.`
+  );
+}
+
 function createConfig(
   userConfig: UserConfig,
   options: LocalTlsPluginOptions,
+  onDefaultedHost: (defaultedHosts: string[]) => void,
 ): Pick<UserConfig, 'server' | 'preview'> {
   const defaultHmrDomain = resolveLocalTlsDomains(options)?.[0];
   const hmr =
@@ -45,9 +59,16 @@ function createConfig(
       ? {
           protocol: 'wss' as const,
           host: defaultHmrDomain,
-          clientPort: 443,
+          clientPort: DEFAULT_PUBLIC_PORT,
         }
       : userConfig.server?.hmr;
+  const defaultedHosts = [
+    ...(userConfig.server?.host === undefined ? ['server.host'] : []),
+    ...(userConfig.preview?.host === undefined ? ['preview.host'] : []),
+  ];
+  if (defaultedHosts.length > 0) {
+    onDefaultedHost(defaultedHosts);
+  }
   return {
     server: {
       host: userConfig.server?.host === undefined ? true : userConfig.server.host,
@@ -77,6 +98,9 @@ function createDefaultDependencies(): PluginRuntimeDependencies {
       } else {
         console.error(message, error);
       }
+    },
+    debug(message): void {
+      console.debug(message);
     },
   };
   return {
@@ -110,7 +134,7 @@ function createDefaultDependencies(): PluginRuntimeDependencies {
         });
       }
       function createService(paths: StatePaths, namespace: string): LocalTlsService {
-        return new LocalTlsService({ paths, opensslPath, namespace, port: 443 });
+        return new LocalTlsService({ paths, opensslPath, namespace, port: DEFAULT_PUBLIC_PORT });
       }
       async function ensureService(
         paths: StatePaths,
@@ -339,6 +363,7 @@ function formatTarget(host: string, port: number): string {
 function resolveUpstream(
   server: SupportedViteServer,
   preview: boolean,
+  logger: PluginLogger,
 ): {
   host: string;
   port: number;
@@ -351,7 +376,11 @@ function resolveUpstream(
       if (url.hostname && Number.isInteger(port) && port > 0) {
         return { host: loopbackHost(url.hostname), port };
       }
-    } catch {}
+    } catch (error) {
+      logger.debug?.(
+        `Ignored unusable local URL "${resolvedUrl}" (${String(error)}); using the server address.`,
+      );
+    }
   }
   const address = server.httpServer?.address();
   const configured = preview ? server.config.preview : server.config.server;
@@ -587,7 +616,7 @@ function createPlugin(
         return;
       }
       started = true;
-      const upstream = resolveUpstream(server, preview);
+      const upstream = resolveUpstream(server, preview, dependencies.logger);
       routeInputs = domains.map((hostname) => ({
         hostname,
         upstreamHost: upstream.host,
@@ -677,10 +706,17 @@ function createPlugin(
     }
   }
 
+  let warnedAboutNetworkHost = false;
   return {
     name: '@vampaz/vite-plugin-local-tls',
     config(userConfig): Pick<UserConfig, 'server' | 'preview'> {
-      return createConfig(userConfig, options);
+      return createConfig(userConfig, options, (defaultedHosts) => {
+        if (warnedAboutNetworkHost) {
+          return;
+        }
+        warnedAboutNetworkHost = true;
+        dependencies.logger.warn(buildHostExposureMessage(defaultedHosts));
+      });
     },
     configureServer(server): void {
       setupServer(server, false);

@@ -42,7 +42,12 @@ describe('Tests workflow', () => {
     expect(source).toContain('actions/setup-node@v7');
     expect(source).toContain('node-version: 24');
     expect(source).toContain('cache-dependency-path: package-lock.json');
-    expect(commands).toEqual(['npm ci', 'npm run check', 'npm run test', 'npm run build']);
+    expect(commands).toEqual([
+      'npm ci',
+      'npm run check',
+      'npm run test:coverage -- --coverage.thresholds.lines=60',
+      'npm run build',
+    ]);
   });
 
   it('proves the installed startup service on Linux, macOS, and Windows', async () => {

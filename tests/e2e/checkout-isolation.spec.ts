@@ -56,9 +56,7 @@ test('isolates regular clones and linked worktrees by Git-derived URL and HMR or
     ),
   );
 
-  const contexts = await Promise.all(
-    fixtures.map(() => browser.newContext({ ignoreHTTPSErrors: true })),
-  );
+  const contexts = await Promise.all(fixtures.map(() => browser.newContext()));
   try {
     for (let index = 0; index < fixtures.length; index += 1) {
       const fixture = fixtures[index]!;

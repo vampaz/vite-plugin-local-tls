@@ -5,6 +5,7 @@ import { readFile, rm, unlink } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { CertificateImportStore } from './certificate-import.js';
 import { CertificateManager } from './certificates.js';
+import { DEFAULT_PUBLIC_PORT } from './constants.js';
 import { migrateLegacyCertificateState } from './legacy-certificate-migration.js';
 import { SERVICE_BOOTSTRAP_HOSTNAME } from './daemon.js';
 import type {
@@ -209,7 +210,7 @@ function createService(context: CliContext): LocalTlsService {
     paths: resolvePaths(context),
     opensslPath: requirements.opensslPath,
     namespace: context.namespace,
-    port: 443,
+    port: DEFAULT_PUBLIC_PORT,
     ...(runAsUser ? { runAsUser } : {}),
   });
 }
@@ -219,7 +220,7 @@ function createStartupServiceMutationCoordinator(): LocalTlsService {
     paths: getStatePaths('default'),
     opensslPath: 'openssl',
     namespace: 'default',
-    port: 443,
+    port: DEFAULT_PUBLIC_PORT,
   });
 }
 
@@ -344,7 +345,7 @@ function createDefaultCliActions(): CliActions {
               paths: installation.paths,
               opensslPath: requirements.opensslPath ?? 'openssl',
               namespace: installation.record.namespace,
-              port: 443,
+              port: DEFAULT_PUBLIC_PORT,
             }),
           ),
         canonicalUpdateStatus,
@@ -450,7 +451,7 @@ function createDefaultCliActions(): CliActions {
           paths: installation.paths,
           opensslPath: requirements.opensslPath!,
           namespace: installation.record.namespace,
-          port: 443,
+          port: DEFAULT_PUBLIC_PORT,
         }).status(),
       })),
     );

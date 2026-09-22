@@ -47,7 +47,7 @@ Local TLS upstream: http://127.0.0.1:5173
 Local TLS URL: https://<repo>.<branch>.localhost
 ```
 
-The first run may request administrator authorization to trust the local certificate authority and install the service that binds port 443. On macOS, service installation and idle updates use a native administrator dialog, including when the dev server starts in the background. If several Vite processes start together, they wait for the same authorization flow instead of opening competing prompts. An outdated compatible service keeps serving active routes without interruption and updates automatically on the next Vite start after it becomes idle. The updater never downgrades a newer compatible installed service.
+The first run may request administrator authorization to trust the local certificate authority and install the service that binds port 443. On macOS, service installation and idle updates use a native administrator dialog. The automatic trust and service-install flow triggered by Vite requires an attached terminal; without one, it refuses and reports the command to run. Direct `vite-local-tls trust` and `vite-local-tls service install` commands are not subject to that refusal and open the same dialog on macOS even while detached, as do idle service updates. If several Vite processes start together, they wait for the same authorization flow instead of opening competing prompts. An outdated compatible service keeps serving active routes without interruption and updates automatically on the next Vite start after it becomes idle. The updater never downgrades a newer compatible installed service.
 
 Port 443 has one canonical startup-service identity on macOS, Linux, and Windows. Releases before this invariant could leave namespaced legacy startup services that competed for the same port after a reboot. The plugin now requires both a strictly validated ownership record and an exact generated launchd plist, systemd unit, or single Task Scheduler action. It adopts a compatible active legacy winner without interrupting routes; once every legacy route is idle, it preserves the existing CA and imported certificates, preferring an already-trusted valid CA when several exist. It promotes the highest compatible newer legacy runtime into the canonical service instead of downgrading it, disables the verified contenders, waits for the canonical service to answer with the compatible control protocol, and only then removes the old definitions. Unverified or tampered targets are reported by `doctor`; their presence blocks automatic convergence and manual service installation until they are inspected.
 
@@ -110,6 +110,15 @@ The plugin supplies Vite defaults only when you have not set them yourself:
 - `server.host`, `preview.host`, and their `allowedHosts` values are enabled for local routing.
 - HMR defaults to WSS on the public hostname and port 443.
 - Explicit Vite server, preview, and HMR settings always win.
+
+**LAN exposure:** because `server.host` and `preview.host` default to `true`, the plaintext Vite dev and preview servers are reachable from devices on your local network; TLS terminates at the proxy, not at Vite. Opt out with:
+
+```js
+export default defineConfig({
+  server: { host: 'localhost' },
+  preview: { host: 'localhost' },
+});
+```
 
 Compatibility options from `vite-plugin-caddy-multiple-tls` remain accepted: `serverName` is a deprecated alias for the now-canonicalized `serviceNamespace`, while `caddyApiUrl` and `caddyAdminOrigin` are deprecated no-ops. The exported `resolveCaddyTlsDomains`, `resolveCaddyTlsUrl`, and `ViteCaddyTlsPluginOptions` names are also deprecated aliases. See the dedicated [migration guide](./MIGRATION.md) for details.
 
@@ -196,11 +205,13 @@ See [Security](./SECURITY.md) for the complete trust, network, service, and cont
 
 - Run `npm exec -- vite-local-tls doctor` first to inspect system requirements and service health.
 - If `doctor` reports legacy startup services with active routes, stop those Vite processes and start any updated project again. Idle owned contenders converge automatically.
-- On Linux, run Vite or lifecycle commands in an interactive terminal when administrator authorization is required. macOS uses a native administrator dialog even when the dev server starts in the background.
+- The automatic trust and service-install flow triggered by Vite requires an interactive terminal; without one the plugin refuses and names the command to run. Direct `vite-local-tls` commands are separate: on Linux they still need that terminal for the password prompt, and on macOS they open the native administrator dialog even when detached. Idle service updates can authorize while detached.
 - If an idle service cannot update automatically because authorization is unavailable, stop active Vite routes and run `npm exec -- vite-local-tls service install` from an interactive terminal.
-- If port 443 is occupied, identify and stop or reconfigure that process yourself; the plugin will not terminate it.
+- On macOS, the operating-system prompt to trust or untrust the certificate authority must be approved within 120 seconds; otherwise the command fails with `The operating system authorization prompt timed out after 120 seconds` and can be rerun.
+- If port 443 is occupied, the conflict message names the listening process when the operating system reports it, including on Windows through `Get-NetTCPConnection` when that lookup succeeds. Identify and stop or reconfigure that process yourself; the plugin will not terminate it.
 - If the wrong server owns a hostname, choose a unique `domain` or `instanceLabel`, or restart the intended server so it makes the latest claim.
 - If a custom non-local hostname fails with `internalTls: false`, import a matching certificate before starting Vite.
+- HMR connects over `wss://` on port 443 through the proxy, so live reload fails while the proxy daemon is down. The plugin detects the disconnect and recovers automatically: it restores the proxy, re-registers the routes with retries, and the Vite client reconnects without restarting Vite.
 
 ## Uninstall completely
 

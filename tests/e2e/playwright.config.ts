@@ -10,6 +10,6 @@ export default defineConfig({
   use: {
     browserName: 'chromium',
     headless: true,
-    ignoreHTTPSErrors: true,
+    ignoreHTTPSErrors: false,
   },
 });

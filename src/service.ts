@@ -331,9 +331,7 @@ export class LocalTlsService {
     const interactive =
       options.interactive ??
       Boolean(
-        !process.env.CI &&
-        (process.platform === 'darwin' ||
-          (process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY)),
+        !process.env.CI && process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY,
       );
     if (!(await options.isTrusted())) {
       if (!interactive) {

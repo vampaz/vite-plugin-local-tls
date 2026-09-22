@@ -30,8 +30,8 @@ jobs:
       - name: Run lint and format checks
         run: npm run check
 
-      - name: Run unit, contract, and package tests
-        run: npm run test
+      - name: Run unit, contract, and package tests with coverage
+        run: npm run test:coverage -- --coverage.thresholds.lines=60
 
       - name: Build package
         run: npm run build

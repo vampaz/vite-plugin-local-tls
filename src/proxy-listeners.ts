@@ -5,6 +5,7 @@ import type {
   ProxyListenerServer,
   ProxyListenerSet,
 } from './interfaces/proxy-listeners.js';
+import { DEFAULT_PUBLIC_PORT } from './constants.js';
 
 export class ProxyListenerError extends Error {
   readonly code?: string;
@@ -67,7 +68,24 @@ function closeServer(server: ProxyListenerServer, connections: Set<Socket>): Pro
 
 function findPortOwner(port: number): Promise<string | null> {
   if (process.platform === 'win32') {
-    return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const script = `Get-NetTCPConnection -LocalPort ${port} -State Listen | Select-Object -First 2 | ForEach-Object { $process = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; "$($_.OwningProcess) $($process.ProcessName)" }`;
+      execFile(
+        'powershell',
+        ['-NoProfile', '-NonInteractive', '-Command', script],
+        (error, stdout) => {
+          if (error) {
+            resolve(null);
+            return;
+          }
+          const rows = stdout
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter((line) => line !== '');
+          resolve(rows.length > 0 ? rows.join(' | ') : null);
+        },
+      );
+    });
   }
   return new Promise((resolve) => {
     execFile('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN'], (error, stdout) => {
@@ -99,7 +117,7 @@ async function buildListenerError(
 export async function startProxyListeners(
   options: ProxyListenerOptions,
 ): Promise<ProxyListenerSet> {
-  const requestedPort = options.port ?? 443;
+  const requestedPort = options.port ?? DEFAULT_PUBLIC_PORT;
   const ipv4 = options.createServer();
   const ipv4Connections = trackConnections(ipv4);
   let port: number;

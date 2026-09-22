@@ -3,6 +3,7 @@ import path from 'node:path';
 import { CertificateImportStore } from './certificate-import.js';
 import { resolveCertificatePolicy } from './certificate-policy.js';
 import { CertificateManager } from './certificates.js';
+import { DEFAULT_PUBLIC_PORT } from './constants.js';
 import { CONTROL_PROTOCOL_VERSION, ControlProtocolError } from './control-protocol.js';
 import { ControlServer } from './control-server.js';
 import type { DaemonOptions } from './interfaces/daemon-options.js';
@@ -87,7 +88,8 @@ export class LocalTlsDaemon {
     }
     const proxy = new ProxyServer({
       registry: this.registry,
-      publicPort: this.#options.port && this.#options.port > 0 ? this.#options.port : 443,
+      publicPort:
+        this.#options.port && this.#options.port > 0 ? this.#options.port : DEFAULT_PUBLIC_PORT,
     });
     try {
       this.#listeners = await startProxyListeners({

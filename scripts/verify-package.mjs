@@ -136,22 +136,45 @@ service.status = async function status() {
   return { running: true, activeRoutes: 0, protocolVersion: 1, compatible: true, state };
 };
 let installCalls = 0;
+const installService = async () => {
+  installCalls += 1;
+};
+try {
+  await service.autoStart({
+    isTrusted: async () => true,
+    trust: async () => undefined,
+    installService,
+  });
+  process.exit(1);
+} catch (error) {
+  if (error?.code !== 'SERVICE_INSTALL_REQUIRED') process.exit(1);
+}
+try {
+  await service.autoStart({
+    isTrusted: async () => true,
+    trust: async () => undefined,
+    isServiceCurrent: async () => false,
+    installService,
+  });
+  process.exit(1);
+} catch (error) {
+  if (error?.code !== 'SERVICE_UPDATE_REQUIRED') process.exit(1);
+}
+if (installCalls !== 0) process.exit(1);
 const result = await service.autoStart({
+  interactive: true,
   isTrusted: async () => true,
   trust: async () => undefined,
-  installService: async () => {
-    installCalls += 1;
-  },
+  installService,
 });
 if (result !== state || installCalls !== 1) process.exit(1);
 installCalls = 0;
 const updateResult = await service.autoStart({
+  interactive: true,
   isTrusted: async () => true,
   trust: async () => undefined,
   isServiceCurrent: async () => false,
-  installService: async () => {
-    installCalls += 1;
-  },
+  installService,
 });
 if (updateResult !== state || installCalls !== 1) process.exit(1);
 console.log('detached-authorization-ok');`,
@@ -160,7 +183,7 @@ console.log('detached-authorization-ok');`,
   );
   requireValue(
     detachedAuthorizationCheck.stdout.trim() === 'detached-authorization-ok',
-    'Installed package blocked macOS authorization without terminal streams.',
+    'Installed package authorization contract failed for detached or interactive flows.',
   );
 
   const cliPath = path.join(

@@ -23,7 +23,9 @@ function detectRepositoryName(cwd: string, runGit: GitRunner): string | undefine
         path.basename(commonDirectory) === '.git' ? path.dirname(commonDirectory) : commonDirectory,
       );
     }
-  } catch {}
+  } catch (error) {
+    void error;
+  }
 
   try {
     const repositoryRoot = runGit(['rev-parse', '--show-toplevel'], cwd);
@@ -39,7 +41,9 @@ function detectBranch(cwd: string, runGit: GitRunner): string | undefined {
     if (branch) {
       return branch;
     }
-  } catch {}
+  } catch (error) {
+    void error;
+  }
 
   try {
     const commit = runGit(['rev-parse', '--short', 'HEAD'], cwd);
