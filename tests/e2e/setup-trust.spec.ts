@@ -3,7 +3,7 @@ import { resolveE2eAuthority, verifyE2eAuthorityTrust } from '../fixtures/server
 
 test('the shared e2e certificate authority is trusted by the operating system', async () => {
   const authority = await resolveE2eAuthority({
-    interactive: process.env.VITE_TLS_E2E_SETUP === 'true',
+    interactive: process.env.npm_lifecycle_event === 'test:e2e:setup',
   });
   await expect(verifyE2eAuthorityTrust(authority.record)).resolves.toBe(true);
 });
