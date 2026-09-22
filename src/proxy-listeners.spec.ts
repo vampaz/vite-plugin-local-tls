@@ -193,11 +193,8 @@ describe('proxy listeners', () => {
       expect(arguments_.join(' ')).toContain(
         `Get-NetTCPConnection -LocalPort ${occupiedPort} -State Listen`,
       );
-      callback(
-        null,
-        'OwningProcess ProcessName\r\n-------------- -----------\r\n      4711 node\r\n',
-        '',
-      );
+      expect(arguments_.join(' ')).toContain('Get-Process -Id');
+      callback(null, '4711 node\r\n', '');
       return null as never;
     }) as never);
     try {

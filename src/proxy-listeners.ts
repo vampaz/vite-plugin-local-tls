@@ -69,7 +69,7 @@ function closeServer(server: ProxyListenerServer, connections: Set<Socket>): Pro
 function findPortOwner(port: number): Promise<string | null> {
   if (process.platform === 'win32') {
     return new Promise((resolve) => {
-      const script = `Get-NetTCPConnection -LocalPort ${port} -State Listen | Select-Object -First 2 OwningProcess,ProcessName`;
+      const script = `Get-NetTCPConnection -LocalPort ${port} -State Listen | Select-Object -First 2 | ForEach-Object { $process = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; "$($_.OwningProcess) $($process.ProcessName)" }`;
       execFile(
         'powershell',
         ['-NoProfile', '-NonInteractive', '-Command', script],
@@ -81,10 +81,7 @@ function findPortOwner(port: number): Promise<string | null> {
           const rows = stdout
             .split(/\r?\n/)
             .map((line) => line.trim())
-            .filter(
-              (line) =>
-                line !== '' && !/^[- ]+$/.test(line) && !/^OwningProcess\s+ProcessName$/.test(line),
-            );
+            .filter((line) => line !== '');
           resolve(rows.length > 0 ? rows.join(' | ') : null);
         },
       );
